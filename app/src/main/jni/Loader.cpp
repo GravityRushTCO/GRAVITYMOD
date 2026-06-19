@@ -43,11 +43,11 @@ bool DownloadFileJNI(const std::string& urlStr, const std::string& outPath) {
         jmethodID urlInit = env->GetMethodID(urlClass, "<init>", "(Ljava/lang/String;)V");
         jstring jUrlStr = env->NewStringUTF(urlStr.c_str());
         jobject urlObj = env->NewObject(urlClass, urlInit, jUrlStr);
-        env->ExceptionClear();
+        if (env->ExceptionCheck()) { env->ExceptionDescribe(); env->ExceptionClear(); }
 
         jmethodID openConn = env->GetMethodID(urlClass, "openConnection", "()Ljava/net/URLConnection;");
         jobject connObj = env->CallObjectMethod(urlObj, openConn);
-        env->ExceptionClear();
+        if (env->ExceptionCheck()) { env->ExceptionDescribe(); env->ExceptionClear(); }
 
         if (connObj) {
             jclass connClass = env->GetObjectClass(connObj);
@@ -58,7 +58,7 @@ bool DownloadFileJNI(const std::string& urlStr, const std::string& outPath) {
 
             jmethodID getRespCode = env->GetMethodID(connClass, "getResponseCode", "()I");
             int respCode = getRespCode ? env->CallIntMethod(connObj, getRespCode) : 0;
-            env->ExceptionClear();
+            if (env->ExceptionCheck()) { env->ExceptionDescribe(); env->ExceptionClear(); }
 
             if (respCode >= 200 && respCode < 300) {
                 jmethodID getIn = env->GetMethodID(connClass, "getInputStream", "()Ljava/io/InputStream;");
@@ -75,7 +75,7 @@ bool DownloadFileJNI(const std::string& urlStr, const std::string& outPath) {
                             jbyte* b = env->GetByteArrayElements(buf, nullptr);
                             outFile.write((char*)b, n);
                             env->ReleaseByteArrayElements(buf, b, JNI_ABORT);
-                            if (env->ExceptionCheck()) { env->ExceptionClear(); break; }
+                            if (env->ExceptionCheck()) { env->ExceptionDescribe(); env->ExceptionClear(); break; }
                         }
                         outFile.close();
                         success = true;
@@ -123,7 +123,15 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     // If payload does not exist, we MUST block and download it now so JNI can register methods
     if (access(payloadPath.c_str(), R_OK) != 0) {
         LOGI("First launch detected. Downloading payload synchronously...");
-        if (!DownloadFileJNI(serverUrl, payloadPath)) {
+        
+        // We must spawn a thread and join it to bypass Android's NetworkOnMainThreadException
+        bool downloadSuccess = false;
+        std::thread dlThread([&]() {
+            downloadSuccess = DownloadFileJNI(serverUrl, payloadPath);
+        });
+        dlThread.join();
+
+        if (!downloadSuccess) {
             LOGE("Synchronous download failed! Mod will not work.");
             return JNI_ERR;
         }
