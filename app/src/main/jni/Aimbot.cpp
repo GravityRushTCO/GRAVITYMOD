@@ -1,0 +1,781 @@
+// AIMBOT HOOKS - OneState RP
+// Auto-aim, Silent Aim, TriggerBot, No Spread
+#include "Aimbot.h"
+#include "GravityGL/Offsets.h"
+#include "Esp.h"
+#include "Includes/Logger.h"
+#include "KittyMemory/KittyMemory.hpp"
+#include "Dobby/dobby.h"
+#include <android/log.h>
+#include <math.h>
+#include <string.h>
+#include <vector>
+#include <map>
+#include <string>
+#include <netdb.h>
+#include <dlfcn.h>
+
+#define AB_LOG_TAG "AIMBOT"
+#define AB_LOGI(...) __android_log_print(ANDROID_LOG_INFO,  AB_LOG_TAG, __VA_ARGS__)
+#define AB_LOGE(...) __android_log_print(ANDROID_LOG_ERROR, AB_LOG_TAG, __VA_ARGS__)
+
+#include "KittyMemory/MemoryPatch.hpp"
+
+int   g_AimbotTargetId    = -1;
+float g_AimbotTargetPos[3] = {0,0,0};
+pthread_mutex_t g_SnifferMtx = PTHREAD_MUTEX_INITIALIZER;
+std::map<int, std::string> g_PlayerNames;
+std::map<int, float> g_PlayerHealth;
+std::map<int, float> g_PlayerArmor;
+std::map<int, V3> g_PlayerPositions;
+
+// Timestamp de la derniere mise a jour de position de la cible (sniffer)
+volatile long long g_AimbotTargetLastUpdateMs = 0;
+// Compteur de hits du dernier paquet d'attaque (feedback cible atteinte)
+volatile int g_LastEmitHitsCount = 0;
+
+// Helper to parse IL2CPP strings for the sniffer
+static void il2cppStringToChar_Sniff(void* str, char* out, int outSize) {
+    if (outSize <= 0) return;
+    out[0] = 0;
+    if (!str || !IsValidMemoryFast(str, 0x14)) return;
+    int len = *(int*)((uint8_t*)str + 0x10);
+    if (len <= 0 || len > 4096) return;
+    uint16_t* chars = (uint16_t*)((uint8_t*)str + 0x14);
+    if (!IsValidMemoryFast(chars, len * sizeof(uint16_t))) return;
+    int n = (len < outSize - 1) ? len : (outSize - 1);
+    for (int i = 0; i < n; i++) {
+        uint16_t c = chars[i];
+        out[i] = (c >= 0x20 && c < 0x7F) ? (char)c : '?';
+    }
+    out[n] = 0;
+}
+
+extern MemoryPatch patch_Knockout1;
+extern MemoryPatch patch_Knockout2;
+extern MemoryPatch patch_HealthSync;
+extern MemoryPatch patch_DeadSync;
+extern MemoryPatch patch_ProcessDead;
+extern MemoryPatch patch_UnconsciousDetect;
+extern MemoryPatch patch_MeleeKnockoutCleanup;
+extern MemoryPatch patch_DeadKnockoutRestore;
+extern MemoryPatch patch_KnockoutSync;
+extern MemoryPatch patch_RagDollState;
+extern bool g_GodModeEnabled;
+
+bool g_RestoreGodModeNextFrame = false;
+
+// Nouveaux paramètres Aimbot (V17) — définis dans Main.cpp
+extern int   g_BonePriority;
+extern bool  g_VisibilityCheck;
+extern float g_AimLockSmoothness;
+
+extern "C" void SetGodModePatchesState(bool enabled);
+
+extern "C" void Aimbot_TempDisableGodMode() {
+    if (g_GodModeEnabled && !g_RestoreGodModeNextFrame) {
+        SetGodModePatchesState(false);
+        g_RestoreGodModeNextFrame = true;
+    }
+}
+
+extern "C" void Aimbot_TempEnableGodMode() {
+    if (g_GodModeEnabled && g_RestoreGodModeNextFrame) {
+        SetGodModePatchesState(true);
+        g_RestoreGodModeNextFrame = false;
+    }
+}
+
+extern bool g_AimbotHeadshot;
+
+void (*orig_FreeCamHandler)(void* _this, uint64_t remoteId, void* method) = nullptr;
+extern "C" void hook_FreeCamHandler(void* _this, uint64_t remoteId, void* method) {
+    g_AimbotTargetId = (int)(remoteId & 0xFFFFFFFF);
+    AB_LOGI("Aimbot Target Acquired via FreeCam: Id=%d", g_AimbotTargetId);
+    if (orig_FreeCamHandler) orig_FreeCamHandler(_this, remoteId, method);
+}
+
+void (*orig_PedDisplacement_Read)(void* _this, void* reader, void* method) = nullptr;
+extern "C" void hook_PedDisplacement_Read(void* _this, void* reader, void* method) {
+    if (orig_PedDisplacement_Read) orig_PedDisplacement_Read(_this, reader, method);
+    if (!_this || !IsValidMemoryFast(_this, 0x3c)) return;
+    int id = *(int*)((char*)_this + 0x0); 
+    float* pos = (float*)((char*)_this + 0x8);
+
+    // Rate-limit position logs (1 log per second per player max) to avoid spam
+    static std::map<int, long long> lastPosLogs;
+    struct timeval tv; gettimeofday(&tv, NULL);
+    long long now = ((long long)tv.tv_sec)*1000 + tv.tv_usec/1000;
+    
+    if (now - lastPosLogs[id] > 2000) {
+        lastPosLogs[id] = now;
+        const char* name = Aimbot_GetPlayerName(id);
+        AB_LOGI("DATAGRAM SNIFFER [Position Ped]: ID=%d | Nom=%s | Pos=(%.1f, %.1f, %.1f)", 
+                id, name ? name : "Inconnu", pos[0], pos[1], pos[2]);
+    }
+
+    if (pos) {
+        pthread_mutex_lock(&g_SnifferMtx);
+        g_PlayerPositions[id] = {pos[0], pos[1], pos[2]};
+        pthread_mutex_unlock(&g_SnifferMtx);
+    }
+
+    if (id == g_AimbotTargetId && g_AimbotTargetId != -1) {
+        g_AimbotTargetPos[0] = pos[0];
+        g_AimbotTargetPos[1] = pos[1]; // removed +0.9f so it's just feet
+        g_AimbotTargetPos[2] = pos[2];
+        // Mise a jour timestamp → Aimbot_IsTargetLocked() retournera true
+        g_AimbotTargetLastUpdateMs = now;
+    }
+}
+
+
+// NICKNAME DATAGRAM SNIFFER
+void (*orig_NicknameTextDatagram_Read)(void* _this, void* reader, void* method) = nullptr;
+extern "C" void hook_NicknameTextDatagram_Read(void* _this, void* reader, void* method) {
+    if (orig_NicknameTextDatagram_Read) orig_NicknameTextDatagram_Read(_this, reader, method);
+    if (!_this || !IsValidMemoryFast(_this, 24)) return;
+
+    // NicknameTextDatagram is a C# struct (ValueType). No 0x10 class header.
+    // Id (EntityIdModel) is at +0x0 (Id field itself is at +0x0 of EntityIdModel)
+    int id = *(int*)((char*)_this + 0x0);
+
+    // FirstName is at +0x8, LastName is at +0x10
+    void* firstNamePtr = *(void**)((char*)_this + 0x8);
+    void* lastNamePtr = *(void**)((char*)_this + 0x10);
+
+    char first[256] = {0};
+    char last[256] = {0};
+
+    if (firstNamePtr) il2cppStringToChar_Sniff(firstNamePtr, first, sizeof(first));
+    if (lastNamePtr) il2cppStringToChar_Sniff(lastNamePtr, last, sizeof(last));
+
+    char fullName[512];
+    snprintf(fullName, sizeof(fullName), "%s %s", first, last);
+
+    pthread_mutex_lock(&g_SnifferMtx);
+    g_PlayerNames[id] = std::string(fullName);
+    pthread_mutex_unlock(&g_SnifferMtx);
+    if (id == g_AimbotTargetId) {
+        g_AimbotTargetLastUpdateMs = 0; // Force un scan prochainement
+    }
+    AB_LOGI("DATAGRAM SNIFFER [Nickname]: ID=%d | Nom=%s", id, fullName);
+}
+
+
+
+// ============================================================
+
+// Recherche un joueur dans le dictionnaire sniffé et définit la cible aimbot
+void Aimbot_SetTargetByName(const char* name) {
+    if (!name || !*name) {
+        g_AimbotTargetId = -1;
+        g_AimbotTargetPos[0] = g_AimbotTargetPos[1] = g_AimbotTargetPos[2] = 0.f;
+        g_AimbotTargetLastUpdateMs = 0;
+        AB_LOGI("Aimbot: cible effacée");
+        return;
+    }
+    pthread_mutex_lock(&g_SnifferMtx);
+    for (auto& kv : g_PlayerNames) {
+        // Recherche insensible à la casse (début de nom)
+        const std::string& pname = kv.second;
+        // strstr case-insensitive via manual lower
+        bool match = false;
+        if (pname.size() >= strlen(name)) {
+            std::string lPname = pname; for (auto& c : lPname) c = tolower(c);
+            std::string lSearch = std::string(name); for (auto& c : lSearch) c = tolower(c);
+            match = (lPname.find(lSearch) != std::string::npos);
+        }
+        if (!match) continue;
+
+        g_AimbotTargetId = kv.first;
+        AB_LOGI("Aimbot cible par pseudo '%s' -> ID=%d (%s)", name, g_AimbotTargetId, kv.second.c_str());
+
+        // Fetch initial position if known from network sniffer
+        if (g_PlayerPositions.find(g_AimbotTargetId) != g_PlayerPositions.end()) {
+            g_AimbotTargetPos[0] = g_PlayerPositions[g_AimbotTargetId].x;
+            g_AimbotTargetPos[1] = g_PlayerPositions[g_AimbotTargetId].y;
+            g_AimbotTargetPos[2] = g_PlayerPositions[g_AimbotTargetId].z;
+            struct timeval tv; gettimeofday(&tv, NULL);
+            g_AimbotTargetLastUpdateMs = ((long long)tv.tv_sec)*1000 + tv.tv_usec/1000;
+            AB_LOGI("Aimbot pos réseau: (%.1f,%.1f,%.1f)", g_AimbotTargetPos[0], g_AimbotTargetPos[1], g_AimbotTargetPos[2]);
+        } else {
+            // Pas encore de position réseau → mettre un timestamp futur pour que
+            // IsTargetLocked() retourne true et que l'ESP cherche dans sa snapshot
+            // la correspondance par ID réseau.
+            struct timeval tv; gettimeofday(&tv, NULL);
+            g_AimbotTargetLastUpdateMs = ((long long)tv.tv_sec)*1000 + tv.tv_usec/1000;
+            AB_LOGI("Aimbot: pas encore de position réseau pour ID=%d, attente sniffer...", g_AimbotTargetId);
+        }
+        pthread_mutex_unlock(&g_SnifferMtx);
+        return;
+    }
+    AB_LOGI("Aimbot_SetTargetByName: pseudo '%s' non trouvé. Joueurs connus: %zu", name, g_PlayerNames.size());
+    for (auto& kv : g_PlayerNames) {
+        AB_LOGI("  ID=%d -> '%s'", kv.first, kv.second.c_str());
+    }
+    pthread_mutex_unlock(&g_SnifferMtx);
+}
+
+int Aimbot_GetTargetId() { return g_AimbotTargetId; }
+
+const char* Aimbot_GetPlayerName(int id) {
+    static thread_local char nameBuf[256];
+    nameBuf[0] = '\0';
+    pthread_mutex_lock(&g_SnifferMtx);
+    auto it = g_PlayerNames.find(id);
+    if (it != g_PlayerNames.end()) {
+        strncpy(nameBuf, it->second.c_str(), sizeof(nameBuf) - 1);
+        nameBuf[sizeof(nameBuf) - 1] = '\0';
+    }
+    pthread_mutex_unlock(&g_SnifferMtx);
+    return nameBuf[0] ? nameBuf : nullptr;
+}
+
+// Retourne true si un pseudo est verrouille ET qu'on a reçu sa position
+// ou défini sa cible récemment (< 30s). Sert au feedback visuel/log.
+bool Aimbot_IsTargetLocked() {
+    if (g_AimbotTargetId == -1) return false;
+    // Vérifie que la cible a été définie il y a < 30s
+    // (même sans position réseau reçue, la cible reste verrouillée)
+    struct timeval tv; gettimeofday(&tv, NULL);
+    long long now = ((long long)tv.tv_sec)*1000 + tv.tv_usec/1000;
+    if ((now - g_AimbotTargetLastUpdateMs) > 30000LL) return false;
+    return true;
+}
+
+int Aimbot_GetLastHitCount() { return g_LastEmitHitsCount; }
+
+void (*orig_VehicleDisplacement_Read)(void* _this, void* reader, void* method) = nullptr;
+extern "C" void hook_VehicleDisplacement_Read(void* _this, void* reader, void* method) {
+    if (orig_VehicleDisplacement_Read) orig_VehicleDisplacement_Read(_this, reader, method);
+    if (!_this || !IsValidMemoryFast(_this, 0x3c)) return;
+    int id = *(int*)((char*)_this + 0x0);
+    float* pos = (float*)((char*)_this + 0x8);
+
+    static std::map<int, long long> lastVehPosLogs;
+    struct timeval tv; gettimeofday(&tv, NULL);
+    long long now = ((long long)tv.tv_sec)*1000 + tv.tv_usec/1000;
+
+    if (now - lastVehPosLogs[id] > 2000) {
+        lastVehPosLogs[id] = now;
+        const char* name = Aimbot_GetPlayerName(id);
+        AB_LOGI("DATAGRAM SNIFFER [Position Veh]: ID=%d | Nom=%s | Pos=(%.1f, %.1f, %.1f)", 
+                id, name ? name : "Inconnu", pos[0], pos[1], pos[2]);
+    }
+
+    if (pos) {
+        pthread_mutex_lock(&g_SnifferMtx);
+        g_PlayerPositions[id] = {pos[0], pos[1], pos[2]};
+        pthread_mutex_unlock(&g_SnifferMtx);
+    }
+
+    if (id == g_AimbotTargetId && g_AimbotTargetId != -1) {
+        g_AimbotTargetPos[0] = pos[0];
+        g_AimbotTargetPos[1] = pos[1];
+        g_AimbotTargetPos[2] = pos[2];
+        // Mise a jour timestamp
+        g_AimbotTargetLastUpdateMs = now;
+    }
+}
+
+
+
+// ==============================================
+// STRUCTURES (à vérifier avec le dump)
+// ==============================================
+
+// Vecteur 3D simple
+struct Vector3 {
+    float x, y, z;
+    Vector3() : x(0), y(0), z(0) {}
+    Vector3(float _x, float _y, float _z) : x(_x), y(_y), z(_z) {}
+    
+    Vector3 operator-(const Vector3& other) const {
+        return Vector3(x - other.x, y - other.y, z - other.z);
+    }
+    
+    float Distance(const Vector3& other) const {
+        float dx = x - other.x;
+        float dy = y - other.y;
+        float dz = z - other.z;
+        return sqrtf(dx*dx + dy*dy + dz*dz);
+    }
+    
+    float Magnitude() const {
+        return sqrtf(x*x + y*y + z*z);
+    }
+    
+    Vector3 Normalized() const {
+        float mag = Magnitude();
+        if (mag > 0.0001f)
+            return Vector3(x/mag, y/mag, z/mag);
+        return Vector3(0, 0, 0);
+    }
+};
+
+// ==============================================
+// CONFIGURATION AIMBOT
+// ==============================================
+static bool b_AimbotEnabled = false;
+static bool b_SilentAim = false;
+static bool b_TriggerBot = false;
+static bool b_NoSpread = false;
+static float f_AimFov = 180.0f;  // Champ de vision pour l'auto-aim
+static float f_AimSmooth = 1.0f; // Lissage (1.0 = instantané)
+static int i_AimBone = 0;        // 0 = tête, 1 = cou, 2 = torse
+
+// ==============================================
+// FONCTIONS UTILITAIRES
+// ==============================================
+
+// Trouve le meilleur ennemi dans le FOV
+// TODO: Implémenter avec les vrais offsets du jeu
+void* FindBestTarget(void* localPlayer, Vector3 cameraPos, Vector3 cameraForward) {
+    // À implémenter:
+    // 1. Parcourir tous les joueurs
+    // 2. Filtrer: vivants, pas en équipe, pas derrière un mur
+    // 3. Calculer l'angle entre cameraForward et la direction vers le joueur
+    // 4. Retourner le plus proche dans le FOV
+    return nullptr;
+}
+
+// Calcule l'angle pour viser une position
+Vector3 CalcAngle(Vector3 from, Vector3 to) {
+    Vector3 delta = to - from;
+    float dist = delta.Magnitude();
+    
+    Vector3 angle;
+    angle.x = -asinf(delta.y / dist) * (180.0f / M_PI);  // Pitch
+    angle.y = atan2f(delta.x, delta.z) * (180.0f / M_PI); // Yaw
+    angle.z = 0.0f;
+    
+    return angle;
+}
+
+// ==============================================
+// HOOK: CameraRecoil (No Spread amélioré)
+// ==============================================
+// Offset: 0x2EC1C48
+// On force le recul à zéro pour éviter tout mouvement de caméra
+
+// ==============================================
+// HOOK: WeaponProduceAttackRangedSystem.OnUpdate
+// ==============================================
+// Offset: 0x2ACF74C
+// Pour le No Spread: on intercepte la direction du tir
+// et on retire la composante aléatoire
+
+// ==============================================
+// HOOK: GetAverageDamage (One Punch amélioré)
+// ==============================================
+// Offset: 0x22D8E78
+// Déjà patché à 999999
+
+// ==============================================
+// FONCTIONS DE CONTRÔLE
+// ==============================================
+
+// Compteurs reset au toggle pour repartir avec des logs frais
+// (déclarés plus bas, juste avant les hooks ARM64).
+extern int s_rayLogCount;
+extern int s_emitLogCount;
+
+void Aimbot_SetEnabled(bool enabled) {
+    b_AimbotEnabled = enabled;
+    s_rayLogCount = 0;
+    s_emitLogCount = 0;
+    AB_LOGI("Aimbot: %s", enabled ? "ON" : "OFF");
+}
+
+bool Aimbot_IsEnabled() {
+    return b_AimbotEnabled;
+}
+
+// Wall-bang : séparé du toggle aimbot car il peut casser les dégâts si bit 0
+// (= layer Default) contient aussi les colliders des peds dans ce jeu.
+static bool b_WallBang = false;
+void Aimbot_SetWallBang(bool en) {
+    b_WallBang = en;
+    AB_LOGI("WallBang SET: %s (b_WallBang=%d)", en ? "ON" : "OFF", (int)b_WallBang);
+}
+
+void Aimbot_SetSilentAim(bool enabled) {
+    b_SilentAim = enabled;
+}
+
+void Aimbot_SetTriggerBot(bool enabled) {
+    b_TriggerBot = enabled;
+}
+
+void Aimbot_SetNoSpread(bool enabled) {
+    b_NoSpread = enabled;
+}
+
+void Aimbot_SetFov(float fov) {
+    f_AimFov = fov;
+}
+
+void Aimbot_SetSmooth(float smooth) {
+    if (smooth < 0.1f) smooth = 0.1f;
+    f_AimSmooth = smooth;
+}
+
+void Aimbot_SetTargetBone(int bone) {
+    i_AimBone = bone;
+}
+
+// ==============================================
+// HOOK PRINCIPAL: appelé chaque frame
+// ==============================================
+void Aimbot_OnUpdate(void* localPlayer, Vector3 cameraPos, Vector3 cameraForward) {
+    if (!b_AimbotEnabled) return;
+    
+    void* target = FindBestTarget(localPlayer, cameraPos, cameraForward);
+    if (!target) return;
+    
+    // TODO: Appliquer l'angle calculé à la caméra du joueur
+    // Vector3 aimAngle = CalcAngle(cameraPos, targetPos);
+    // SetCameraAngles(aimAngle);
+}
+
+// ============================================================================
+// RECON HOOK : WeaponStorage.RayCastAttackRanged @ libBase + 0x2AD5AAC
+// ----------------------------------------------------------------------------
+// Phase 1 : on hooke uniquement pour LOG la signature ARM64. La fonction est
+// appelée à chaque tir d'arme à distance. On enregistre :
+//   - x0 (this pointer = WeaponStorage instance)
+//   - x1..x7 (premiers args entiers ou pointeurs)
+//   - s0..s7 (premiers args float / Vector3 par valeur si HFA)
+// puis on appelle l'original, sans rien modifier.
+//
+// Cycle attendu : utilisateur lance le jeu, ESP+aimbot ON, tire 1 balle, copie
+// les logs `AIMBOT RAYCAST ...`, on en déduit où sont origin/direction/out-hit
+// puis on implémente la redirection en phase 2.
+// ============================================================================
+
+// Compteurs pour limiter le spam de logs (5 tirs max). Reset par
+// Aimbot_SetEnabled pour repartir avec des logs frais à chaque toggle.
+// PAS static pour pouvoir être référencés via `extern` plus haut.
+int s_rayLogCount = 0;
+int s_emitLogCount = 0;
+
+#if defined(__aarch64__)
+// --- ARM64 build : DobbyInstrument (callback "pre-handler", aucun appel orig
+//     à faire — Dobby se charge de continuer dans la fonction originale).
+//     Tous les registres (x0-x28, q0-q7, fp, lr, sp) sont préservés.
+
+// ----------------------------------------------------------------------------
+// Signature découverte (AAPCS64) :
+//   RayCastAttackRanged(this(x0),
+//                       Vector3 origin    in  s0=q0.f1, s1=q1.f1, s2=q2.f1,
+//                       Vector3 direction in  s3=q3.f1, s4=q4.f1, s5=q5.f1,
+//                       float maxDistance in  s6=q6.f1,
+//                       ...args entiers (entityId, layermask, flags, ...),
+//                       out WeaponRaycastHit *x8)
+//
+// Phase 2 : on lit l'origine, on récupère la meilleure cible depuis l'ESP, on
+// remplace la direction par un vecteur unitaire pointant vers le centre de la
+// box du joueur ciblé. La balle part dans cette direction.
+// ----------------------------------------------------------------------------
+extern "C" void instr_RayCastRanged(void* /*address*/, DobbyRegisterContext* ctx) {
+    if (!b_AimbotEnabled) return;
+
+    auto& q = ctx->floating.regs;
+    auto& g = ctx->general.regs;
+
+    // Temporarily disable GodMode so our bullets register damage server-side
+    Aimbot_TempDisableGodMode();
+
+    // Origine du tir (camera/canon).
+    float ox = q.q0.f.f1;
+    float oy = q.q1.f.f1;
+    float oz = q.q2.f.f1;
+
+    // Cible : centre de la box du joueur le plus proche du centre de l'écran ou ciblée par nom.
+    float tx, ty, tz;
+    if (!Esp_GetBestTargetWorld(&tx, &ty, &tz)) return; // pas de cible -> shot normal
+    // Esp_GetBestTargetWorld handle DEJA la priorité réseau et l'offset height (+1.7f ou +1.0f)
+
+    // Direction normalisée origin -> target.
+    float dx = tx - ox;
+    float dy = ty - oy;
+    float dz = tz - oz;
+    float len = sqrtf(dx*dx + dy*dy + dz*dz);
+    if (len < 0.01f) return;
+    float inv = 1.0f / len;
+    dx *= inv; dy *= inv; dz *= inv;
+
+    // ========================================================================
+    // WALL-BANG V149 — REDESIGN COMPLET
+    // ------------------------------------------------------------------------
+    // Ancien design (layermask) cassait les hits car les peds étaient sur le
+    // layer 0 dans OneState. Nouveau design : on **téléporte l'origine du
+    // raycast à 0.5 m DEVANT la cible**, le long de la direction inverse.
+    // Conséquences :
+    //   - Le ray ne fait plus que ~0.5 m → AUCUN mur ne peut le bloquer car
+    //     il part DÉJÀ derrière le mur (côté cible).
+    //   - La direction reste origin→target normalisée → le hit logique reste
+    //     "balle qui touche ped au centre de la box".
+    //   - Le serveur reçoit un hit valide sur le ped : dégâts appliqués.
+    //
+    // Trade-off : le serveur peut éventuellement détecter un origin distinct
+    // de la position camera du joueur (anti-cheat strict). Si ban, désactiver
+    // toggle 132. Aucun signal de ban observé en interne pour l'instant.
+    //
+    // Wall-bang activé UNIQUEMENT si toggle 132 ON ; sinon on garde l'origin
+    // d'origine = aimbot pur (balle stoppée par les murs comme normalement).
+    // ========================================================================
+    if (b_WallBang) {
+        const float WB_OFFSET = 0.5f; // mètres devant la cible
+        // Nouvelle origine = target - dir * WB_OFFSET (= 0.5m devant cible).
+        q.q0.f.f1 = tx - dx * WB_OFFSET;
+        q.q1.f.f1 = ty - dy * WB_OFFSET;
+        q.q2.f.f1 = tz - dz * WB_OFFSET;
+    }
+
+    // Override Vector3 direction (s3, s4, s5).
+    q.q3.f.f1 = dx;
+    q.q4.f.f1 = dy;
+    q.q5.f.f1 = dz;
+
+    // PORTÉE V150 : on NE touche PLUS à q.q6 (maxDistance).
+    // Diagnostic : le user rapportait "j'aimbot, mais aucun dégât appliqué".
+    // Hypothèse : le datagram WeaponAttackEmit envoyé au serveur contient la
+    // maxDistance ; en forçant 9999m côté client, le serveur rejette le hit
+    // car > portée native de l'arme (~75m). Le résultat est "hit invalide
+    // → 0 damage".
+    // En laissant la valeur d'origine, l'aimbot redirige juste la direction
+    // (c'est suffisant : si la cible est dans la portée, le hit passe ; si
+    // > portée, le serveur rejette mais c'est le comportement légitime).
+
+    if (s_rayLogCount < 5) {
+        s_rayLogCount++;
+        AB_LOGI("AIM #%d origin=(%.2f,%.2f,%.2f) target=(%.2f,%.2f,%.2f) dir=(%.3f,%.3f,%.3f) dist=%.1f",
+                s_rayLogCount, ox,oy,oz, tx,ty,tz, dx,dy,dz, len);
+    }
+}
+
+// ============================================================================
+// HOOK CRITIQUE V153 : WeaponAttackEmitDatagram.Write @ 0x2ADA8AC
+// ----------------------------------------------------------------------------
+// Dump confirme la structure du datagram envoyé au serveur :
+//   0x00 : EntityIdModel ElementId
+//   0x08 : WeaponType
+//   0x0C : Vector3 StartPosition
+//   0x18 : Vector3 Direction      ← ON RÉÉCRIT ÇA
+//   0x28 : DateTime Timestamp
+//   0x30 : int Seed
+//   0x34 : int HitsCount
+//   0x38 : FrugalList2<WeaponTargetHitRequestDatagramData> Hits
+//
+// PROBLÈME RÉSOLU :
+//   Notre hook sur RayCastAttackRanged modifie la direction POUR le raycast
+//   client (on touche le ped, hit list = "ped X hit") MAIS le caller
+//   WeaponProduceAttackRangedSystem stocke sa variable locale `direction`
+//   (= direction camera ORIGINALE) dans WeaponAttackSend.Direction.
+//   WeaponAttackSendSystem sérialise ça dans WeaponAttackEmitDatagram.
+//   Serveur reçoit : origin + ORIG_DIRECTION + hit sur ped → INCOHÉRENT
+//   → serveur re-raycast, ne trouve pas le ped → rejette les hits.
+//
+// FIX :
+//   On hook Write juste avant sérialisation. x0 = this (pointeur datagram).
+//   Si aimbot ON + target verrouillée, on recalcule direction (origin→target)
+//   et on l'écrit à *(Vector3*)(this + 0x18).
+//   Résultat : serveur reçoit origin + NOTRE_DIRECTION + hit sur ped → cohérent
+//   → serveur accepte → damage appliqué.
+// ============================================================================
+// Timer for Smart God Mode
+#include <sys/time.h>
+static long long get_current_time_ms() {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (((long long)tv.tv_sec) * 1000) + (tv.tv_usec / 1000);
+}
+
+long long g_LastFireTime = 0;
+
+long long Aimbot_GetLastFireTime() {
+    return g_LastFireTime;
+}
+
+extern "C" void instr_WeaponAttackEmitWrite(void* /*address*/, DobbyRegisterContext* ctx) {
+    g_LastFireTime = get_current_time_ms();
+    
+    if (!b_AimbotEnabled) {
+        return;
+    }
+
+    void* datagram = (void*)ctx->general.regs.x0;
+    if (!datagram) {
+        return;
+    }
+
+    // === GUARD: vérifier que c'est bien un paquet de TIR et non de rechargement ===
+    // HitsCount @ +0x34 : si c'est 0 ET aucune cible verrouillée côté réseau,
+    // c'est probablement un paquet de rechargement/action → ne pas le corrompre.
+    int hitsCountCheck = *(int*)((char*)datagram + 0x34);
+    // WeaponType @ +0x08 : rechargement utilise un type différent.
+    // Un datagram de tir légitime a toujours StartPosition non-null.
+    float* spCheck = (float*)((char*)datagram + 0x0C);
+    if (spCheck[0] == 0.f && spCheck[1] == 0.f && spCheck[2] == 0.f) {
+        // Position nulle = paquet système (rechargement, sync d'état) → skip
+        return;
+    }
+
+    // StartPosition @ +0xC
+    float* sp = (float*)((char*)datagram + 0x0C);
+    float ox = sp[0], oy = sp[1], oz = sp[2];
+
+    // Cible aimbot (Aimbot Réseau - Network Position)
+    float tx, ty, tz;
+    if (!Esp_GetBestTargetWorld(&tx, &ty, &tz)) {
+        // Pas de cible : on log pour diagnostic mais on n'écrit rien.
+        if (s_emitLogCount < 5) {
+            s_emitLogCount++;
+            AB_LOGI("EMIT #%d SKIPPED (no target). origin=(%.2f,%.2f,%.2f)",
+                   s_emitLogCount, ox, oy, oz);
+        }
+        return;
+    }
+
+    float dx = tx - ox, dy = ty - oy, dz = tz - oz;
+    float len = sqrtf(dx*dx + dy*dy + dz*dz);
+    if (len < 0.01f) {
+        return;
+    }
+    float inv = 1.0f / len;
+    dx *= inv; dy *= inv; dz *= inv;
+
+    // Direction @ +0x18 : on réécrit la direction envoyée au serveur
+    float* dir = (float*)((char*)datagram + 0x18);
+    dir[0] = dx;
+    dir[1] = dy;
+    dir[2] = dz;
+
+    // V155 FIX "1ère balle touche, suivantes ratent" :
+    // Seed @ +0x30 contrôle la reconstruction serveur du spread/recul. Si on
+    // change la Direction côté client mais pas le Seed, le serveur applique
+    // sa fonction pseudo-random sur NOTRE direction → la balle reconstruite
+    // dévie. Forcer Seed=0 → spread déterministe nul → la balle part pile
+    // dans la direction qu'on a écrite. Critique pour les armes auto/burst,
+    // utile aussi pour pistolet avec recul aléatoire.
+    int* seed = (int*)((char*)datagram + 0x30);
+    int oldSeed = *seed;
+    *seed = 0;
+
+    // V155 DIAGNOSTIC : log HitsCount @ +0x34. Si c'est 0, c'est que le
+    // raycast local n'a pas touche de ped → server recoit "tir sans hit"
+    // → 0 damage cote serveur.
+    int hitsCount = *(int*)((char*)datagram + 0x34);
+
+    // === FEEDBACK CIBLE ATTEINTE ===
+    // Mise a jour du compteur global (lu par Main.cpp / menu)
+    g_LastEmitHitsCount = hitsCount;
+
+    // Log PERMANENT (chaque tir) : HIT ou MISS clairement visible dans logcat
+    // Filtre avec : adb logcat -s AIMBOT
+    AB_LOGI("=== TIR === dir=(%.3f,%.3f,%.3f) dist=%.1fm HitsCount=%d %s",
+            dx, dy, dz, len, hitsCount,
+            hitsCount > 0 ? ">>> CIBLE ATTEINTE <<<" : ">>> RATE (0 hit) <<<");
+}
+
+// ============================================================================
+
+// --- ANTI-CRASH LDPLAYER (api.vk.ru SSL SIGILL) ---
+int (*orig_getaddrinfo)(const char *node, const char *service, const struct addrinfo *hints, struct addrinfo **res) = nullptr;
+extern "C" int hook_getaddrinfo(const char *node, const char *service, const struct addrinfo *hints, struct addrinfo **res) {
+    if (node && strstr(node, "api.vk.ru")) {
+        AB_LOGI("BLOCKED DNS RESOLUTION FOR: %s (Anti-Crash LDPlayer)", node);
+        return EAI_FAIL; // Fail the DNS lookup to prevent SSL connection crash
+    }
+    if (orig_getaddrinfo) return orig_getaddrinfo(node, service, hints, res);
+    return EAI_AGAIN;
+}
+
+void (*orig_ElementHealthDatagram_Read)(void* _this, void* reader, void* method) = nullptr;
+extern "C" void hook_ElementHealthDatagram_Read(void* _this, void* reader, void* method) {
+    if (orig_ElementHealthDatagram_Read) orig_ElementHealthDatagram_Read(_this, reader, method);
+    if (!_this || !IsValidMemoryFast(_this, 12)) return;
+    int id = *(int*)((char*)_this + 0x0);
+    int val = *(int*)((char*)_this + 0x8);
+    pthread_mutex_lock(&g_SnifferMtx);
+    g_PlayerHealth[id] = (float)val;
+    pthread_mutex_unlock(&g_SnifferMtx);
+}
+
+void (*orig_ElementArmorDatagram_Read)(void* _this, void* reader, void* method) = nullptr;
+extern "C" void hook_ElementArmorDatagram_Read(void* _this, void* reader, void* method) {
+    if (orig_ElementArmorDatagram_Read) orig_ElementArmorDatagram_Read(_this, reader, method);
+    if (!_this || !IsValidMemoryFast(_this, 12)) return;
+    int id = *(int*)((char*)_this + 0x0);
+    int val = *(int*)((char*)_this + 0x8);
+    pthread_mutex_lock(&g_SnifferMtx);
+    g_PlayerArmor[id] = (float)val;
+    pthread_mutex_unlock(&g_SnifferMtx);
+}
+
+void Aimbot_InstallHooks(uintptr_t libBase) {
+    if (!libBase) {
+        AB_LOGE("Aimbot_InstallHooks: libBase=0");
+        return;
+    }
+
+    // === AIMBOT CORE ===
+    // 1) RayCastAttackRanged : redirige le raycast client-side vers la cible
+    void* rayTarget = (void*)(libBase + RVA_RayCastRanged);
+    int rc1 = DobbyInstrument(rayTarget, instr_RayCastRanged);
+    AB_LOGI("DobbyInstrument RayCastAttackRanged @%p ret=%d", rayTarget, rc1);
+
+    // 2) WeaponAttackEmitDatagram.Write : réécrit la direction dans le paquet serveur
+    void* emitTarget = (void*)(libBase + RVA_WeaponAttackEmitDatagram_Write);
+    int rc2 = DobbyInstrument(emitTarget, instr_WeaponAttackEmitWrite);
+    AB_LOGI("DobbyInstrument WeaponAttackEmitDatagram.Write @%p ret=%d", emitTarget, rc2);
+
+    // 3) FreeCamHandler : acquisition de cible via FreeCam
+    void* freeCamTarget = (void*)(libBase + RVA_FreeCamHandler);
+    DobbyHook(freeCamTarget, (void*)hook_FreeCamHandler, (void**)&orig_FreeCamHandler);
+    AB_LOGI("DobbyHook FreeCamHandler @%p", freeCamTarget);
+
+    // === SNIFFER RÉSEAU (uniquement ce qui est utile) ===
+    
+    // 4) PedDisplacementSyncDatagram.Read : sniffer de position des joueurs
+    void* pedDispTarget = (void*)(libBase + RVA_PedDisplacementSyncDatagram_Read);
+    DobbyHook(pedDispTarget, (void*)hook_PedDisplacement_Read, (void**)&orig_PedDisplacement_Read);
+    AB_LOGI("DobbyHook PedDisplacementSyncDatagram @%p", pedDispTarget);
+
+    // 5) VehicleDisplacementSyncDatagram.Read : sniffer de position des voitures
+    void* vehDispTarget = (void*)(libBase + RVA_VehicleDisplacementSyncDatagram_Read);
+    DobbyHook(vehDispTarget, (void*)hook_VehicleDisplacement_Read, (void**)&orig_VehicleDisplacement_Read);
+    AB_LOGI("DobbyHook VehicleDisplacementSyncDatagram @%p", vehDispTarget);
+
+    // 6) NicknameTextDatagram.Read : pseudos des joueurs → ciblage par nom
+    void* nicknameTarget = (void*)(libBase + RVA_NicknameTextDatagram_Read);
+    DobbyHook(nicknameTarget, (void*)hook_NicknameTextDatagram_Read, (void**)&orig_NicknameTextDatagram_Read);
+    AB_LOGI("DobbyHook NicknameTextDatagram @%p", nicknameTarget);
+
+    // 7) ElementHealthDatagram.Read : sniffer de santé des joueurs
+    void* healthTarget = (void*)(libBase + RVA_ElementHealthDatagram_Read);
+    DobbyHook(healthTarget, (void*)hook_ElementHealthDatagram_Read, (void**)&orig_ElementHealthDatagram_Read);
+    AB_LOGI("DobbyHook ElementHealthDatagram.Read @%p", healthTarget);
+
+    // 8) ElementArmorDatagram.Read : sniffer d'armure des joueurs
+    void* armorTarget = (void*)(libBase + RVA_ElementArmorDatagram_Read);
+    DobbyHook(armorTarget, (void*)hook_ElementArmorDatagram_Read, (void**)&orig_ElementArmorDatagram_Read);
+    AB_LOGI("DobbyHook ElementArmorDatagram.Read @%p", armorTarget);
+
+    AB_LOGI("Aimbot_InstallHooks: hooks installed (aimbot x3 + network sniffers)");
+}
+
+#else
+// --- ARM 32 bits : pas d'aimbot (offsets 64-bit uniquement) ---
+void Aimbot_InstallHooks(uintptr_t /*libBase*/) {
+    AB_LOGI("Aimbot_InstallHooks: skipped (32-bit build)");
+}
+
+long long Aimbot_GetLastFireTime() { return 0; }
+#endif
+
+
+// g_GodModeEnabled et g_AimbotHeadshot définis dans Main.cpp
+extern bool g_AimbotHeadshot;

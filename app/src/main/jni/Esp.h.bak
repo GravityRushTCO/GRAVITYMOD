@@ -1,0 +1,170 @@
+// ESP module - OneState RP
+// Architecture:
+//  - Hook UnityEngine.Camera.OnPreCull (or similar) to capture worldToCameraMatrix + projectionMatrix each frame
+//  - Hook CharacterActor.PreSimulationUpdate (extension of NoClip hook in Main.cpp)
+//    to collect each frame the list of all CharacterActor instances active
+//  - For each collected ped: read transform.position, compute WorldToScreen with cached matrices
+//  - Store results in thread-safe buffer
+//  - Expose to Java overlay via JNI native methods
+#pragma once
+#include <stdint.h>
+#include <pthread.h>
+#include <vector>
+
+// Type d'un ped pour ESP / coloration.
+//  0 = inconnu (non classé)
+//  1 = local player (toi-même)
+//  2 = vrai joueur (humain)
+//  3 = PNJ / NPC / IA
+//  4 = police / forces de l'ordre
+enum EspPedType : int {
+    ESP_PED_UNKNOWN = 0,
+    ESP_PED_LOCAL   = 1,
+    ESP_PED_PLAYER  = 2,
+    ESP_PED_NPC     = 3,
+    ESP_PED_POLICE  = 4,
+};
+
+struct EspPed {
+    float screenX;       // pixel x on screen (client width units)
+    float screenY;       // pixel y on screen (client height units, from top)
+    float screenHeadX;
+    float screenHeadY;
+    float distance;      // meters from local ped
+    float worldX, worldY, worldZ;
+    bool  onScreen;      // true if pos is in front of camera
+    bool  isLocal;
+    int   pedType;       // EspPedType (0..4)
+    float health;        // 0..1 (1 = full HP, 0 = dead). -1 si inconnu.
+    char  name[32];      // GameObject name (truncated, ASCII only). Empty = inconnu.
+    void* actorPtr;      // Native pointer to the CharacterActor instance.
+};
+
+// Lifecycle
+void Esp_Init(uintptr_t libBase);
+
+// Toggle from Java/menu
+void Esp_SetEnabled(bool en);
+bool Esp_IsEnabled();
+
+// Called from CharacterActor.PreSimulationUpdate hook in Main.cpp
+// Registers a CharacterActor instance for this frame.
+void Esp_RegisterActor(void* characterActor);
+
+// Called from CharacterActor.PreSimulationUpdate hook in Main.cpp.
+// Cette fonction est appelée UNIQUEMENT pour le local (les remotes ont leur
+// CharacterActor désactivé, mouvement géré par PedNetwork). C'est donc le
+// moyen le plus fiable pour identifier le local actor pour le teleport.
+void Esp_NotifyLocalActor(void* characterActor);
+
+// Called from a frame-end hook. Captures camera matrices and computes screen positions.
+// We trigger it from our PreSimulationUpdate hook end, after orig is called.
+void Esp_FrameTick();
+
+// Snapshot for JNI: returns a copy of current peds array (thread-safe).
+std::vector<EspPed> Esp_GetSnapshot();
+
+// === Aimbot helpers ===
+// Picks the best non-local target (closest to screen center) from the latest
+// snapshot. Returns true and fills outX/outY/outZ with the world position of
+// the box center (~chest height = feet + 0.9m). Returns false if no valid
+// target is currently visible.
+bool Esp_GetBestTargetWorld(float* outX, float* outY, float* outZ, bool allowOffscreen = false, void** outActorPtr = nullptr);
+
+// === Teleport (sans passer par les fonctions admin) ===
+// Appelle Transform.set_position_Injected directement sur le joueur local.
+// Sauvegarde la position courante.
+bool Teleport_SavePosition();
+// Téléporte le joueur local à la dernière position sauvegardée.
+bool Teleport_ToSavedPosition();
+// Téléporte le joueur local à une position arbitraire (coords monde Unity).
+bool Teleport_ToPosition(float x, float y, float z, bool ignoreCooldown = false);
+
+// === Multi-slot teleport (10 slots persistants) ===
+// Chaque slot stocke (x, y, z) sauvegardé dans /sdcard/Download/onestate_slots.txt
+// donc persistant entre les sessions. Slot index = 0..9.
+//
+// Teleport_SaveSlot(i)  : capture la position courante du local dans le slot i
+//                         et écrit le fichier. Retourne false si pas de local.
+// Teleport_GoSlot(i)    : téléporte au slot i. Retourne false si slot vide.
+// Teleport_LoadSlots()  : lit le fichier au boot et remplit les slots en mémoire.
+bool Teleport_SaveSlot(int slotIndex);
+bool Teleport_GoSlot(int slotIndex);
+void Teleport_LoadSlots();
+
+// === Auto-Follow Target ===
+// Quand activé, téléporte le local 3.5m au-dessus de la cible aimbot
+// (la plus proche du viseur) à ~10 Hz. Permet de suivre un joueur dans les
+// airs et de lui tirer dessus tout seul.
+extern float g_AutoFollowDistance;
+extern float g_AutoFollowHeight;
+void Esp_SetAutoFollow(bool on);
+bool Esp_IsAutoFollowActive();
+void Esp_SetAutoFollowCar(bool on);
+extern "C" void Esp_TPCarToTarget();
+bool Esp_IsAutoFollowCarActive();
+bool Esp_TeleportToNextGraffiti();
+void Esp_AutoMapGraffiti(bool active);
+void Esp_SetSelectedTagIdx(int idx);
+bool Esp_TeleportToSelectedGraffiti();
+void Esp_SetAutoTpTags(bool on);
+
+// Mass vehicle teleport (Car Jacking Aura)
+
+// Called once at startup from Main.cpp hack_thread to register hooks
+void Esp_InstallCameraHook();
+
+// === Visualization mode ===
+// Dot mode : affiche un cercle au centre du ped au lieu d'une box.
+// Toggle 152 du menu, propagé au Java via JNI getter dans EspBridge.
+void Esp_SetDotMode(bool en);
+bool Esp_IsDotMode();
+
+// === ESP Options (toggles 194-198) ===
+void Esp_SetLineEnabled(bool en);
+bool Esp_IsLineEnabled();
+void Esp_SetBoxEnabled(bool en);
+bool Esp_IsBoxEnabled();
+void Esp_SetDistanceEnabled(bool en);
+bool Esp_IsDistanceEnabled();
+void Esp_SetMarkerEnabled(bool en);
+bool Esp_IsMarkerEnabled();
+void Esp_SetDynamicColor(bool en);
+bool Esp_IsDynamicColor();
+void Esp_SetCrosshairEnabled(bool en);
+bool Esp_IsCrosshairEnabled();
+void Esp_SetCrosshairCircleEnabled(bool en);
+bool Esp_IsCrosshairCircleEnabled();
+void Esp_SetCrosshairCircleRadius(int r);
+int Esp_GetCrosshairCircleRadius();
+void Esp_SetHealthEnabled(bool en);
+bool Esp_IsHealthEnabled();
+
+// === Fly Mode / God Mode helper ===
+// Indique si un CharacterActor donné est le local actor (utilisé par les
+// hooks de Main.cpp pour ne filtrer la velocity QUE sur le local).
+bool Esp_IsLocalActor(void* characterActor);
+
+// Retourne le Transform pointer du local actor (ou NULL si pas encore
+// identifié). Utilisé par hook_SetLocalScaleInjected pour ne scaler QUE
+// le local et non tous les Transforms du jeu (UI, env, autres peds).
+void* Esp_GetLocalTransform();
+
+// Force un scan immédiat de la scène pour repérer le local. Utilisé par
+// Teleport_ToPosition quand ESP est OFF et que s_localActor est NULL.
+void Esp_ForceScanLocal();
+
+// === Projection View*Projection synchronisée Java ===
+// Le C++ capture la matrice VP + dimensions écran à chaque PreCull. Le Java
+// la lit au moment exact du onDraw (Choreographer vsync) et fait LUI-MÊME
+// la projection W2S. Comme ça les boxes suivent la caméra à la frame près
+// (plus de freeze/saccade quand le user tourne la caméra).
+// Sortie : [vp[0..15], pixelW, pixelH] = 18 floats. Retourne false si aucune
+// caméra capturée pour le moment.
+bool Esp_GetViewProjection(float out18[18]);
+
+// === IL2CPP helper exposé pour Main.cpp (Device ID Faker) ===
+// Crée une string IL2CPP managée à partir d'une chaîne C. Retourne nullptr
+// si IL2CPP pas prêt. Le caller transfère la string au runtime managé
+// (par exemple comme valeur de retour d'un hook).
+void* Esp_MakeIl2cppString(const char* utf8);

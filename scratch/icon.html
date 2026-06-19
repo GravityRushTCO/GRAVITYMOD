@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body {
+    background: transparent;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+  }
+  .container {
+    animation: bounce 2s ease-in-out infinite;
+  }
+  .icon {
+    font-size: 40px;
+    font-weight: 900;
+    text-align: center;
+    filter: drop-shadow(0 0 10px currentColor);
+    animation: rgb 4s linear infinite;
+  }
+  @keyframes rgb {
+    0% { color: #ff0000; }
+    20% { color: #ffff00; }
+    40% { color: #00ff00; }
+    60% { color: #00ffff; }
+    80% { color: #ff00ff; }
+    100% { color: #ff0000; }
+  }
+  @keyframes bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="icon">⚡</div>
+  </div>
+</body>
+</html>

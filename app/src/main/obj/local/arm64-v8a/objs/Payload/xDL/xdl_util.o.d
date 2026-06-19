@@ -1,0 +1,4 @@
+D:/ONESTATENEW/LGL_Project/Android-Mod-Menu-main/app/src/main/obj/local/arm64-v8a/objs/Payload/xDL/xdl_util.o: \
+  D:/ONESTATENEW/LGL_Project/Android-Mod-Menu-main/app/src/main/jni/xDL/xdl_util.c \
+  D:/ONESTATENEW/LGL_Project/Android-Mod-Menu-main/app/src/main/jni/xDL/xdl_util.h
+D:/ONESTATENEW/LGL_Project/Android-Mod-Menu-main/app/src/main/jni/xDL/xdl_util.h:

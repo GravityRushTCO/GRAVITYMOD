@@ -1,0 +1,2372 @@
+// OneState RP - MOD MENU V143 CLEAN
+// AdminLevel4 (6) | ESP+Wallhack+Aimbot | GodMode fix | No economy bloat
+// ARM64: RET=C0035FD6 | RET0=00008052C0035FD6 | RET1=20008052C0035FD6 | RET6=C0008052C0035FD6
+
+#include "Includes/Logger.h"
+#include "Includes/obfuscate.h"
+#include "KittyMemory/KittyMemory.hpp"
+#include "KittyMemory/MemoryPatch.hpp"
+#include "Menu/Menu.hpp"
+#include "ESP_Aimbot.h"
+#include "Esp.h"
+#include "Aimbot.h"
+#include "Hwid.h"
+#include "il2cpp_bridge.h"
+#include "Emanuel_IL2CPP.h"
+#include "NetSniff.h"
+#include "Dobby/dobby.h"
+#include <dlfcn.h>
+#include <jni.h>
+#include <link.h>
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <unistd.h>
+#include <string>
+
+// --- INTEGRATION TCO ---
+
+#define targetLibName "libil2cpp.so"
+#define DBG "GRAVITY"
+
+bool b_PatchesReady = false;
+uintptr_t g_base = 0;
+
+float g_joyX = 0;
+float g_joyY = 0;
+float g_AutoFollowHeight = 3.5f;
+float g_AutoFollowDistance = 0.0f;
+bool g_NoReloadEnabled = false;
+bool g_TpCarteToggle = false;
+bool g_ForceDriverSeat = false;
+bool Teleport_SaveSlot(int slotIndex) { return false; }
+
+struct LibInfo {
+  uintptr_t image_base = 0;
+  bool valid = false;
+};
+
+// Utilise dl_iterate_phdr - meme methode que Frida Module.getBaseAddress()
+// Evite les faux positifs dans /proc/maps (caches AOT, mmaps, etc.)
+struct dl_find_ctx {
+  const char *name;
+  uintptr_t base;
+  bool found;
+};
+static int dl_find_cb(struct dl_phdr_info *info, size_t, void *data) {
+  dl_find_ctx *ctx = (dl_find_ctx *)data;
+  if (info->dlpi_name && strstr(info->dlpi_name, ctx->name)) {
+    ctx->base = (uintptr_t)info->dlpi_addr;
+    ctx->found = true;
+    LOGI("GRAVITY: dl_phdr found: %s @ 0x%lx", info->dlpi_name, ctx->base);
+    return 1; // stop
+  }
+  return 0;
+}
+LibInfo get_lib_info(const char *lib) {
+  LibInfo info;
+  dl_find_ctx ctx = {lib, 0, false};
+  dl_iterate_phdr(dl_find_cb, &ctx);
+  if (ctx.found) {
+    info.image_base = ctx.base;
+    info.valid = true;
+  }
+  return info;
+}
+bool wait_for_lib(const char *lib, int secs) {
+  char line[512];
+  for (int i = 0; i < secs; i++) {
+    FILE *fp = fopen("/proc/self/maps", "r");
+    if (fp) {
+      bool f = false;
+      while (fgets(line, sizeof(line), fp)) {
+        if (strstr(line, lib)) {
+          f = true;
+          break;
+        }
+      }
+      fclose(fp);
+      if (f) return true;
+    }
+    sleep(1);
+  }
+  return false;
+}
+
+// ==============================================
+// PATCHES - V107
+// ==============================================
+
+// -- GOD MODE --
+MemoryPatch patch_HealthSync; // ElementHealthSync.OnUpdate → RET
+MemoryPatch patch_Knockout1;  // SetUnconsciousKnockout → RET
+MemoryPatch patch_Knockout2;  // ApplyMeleeKnockoutForce → RET
+MemoryPatch patch_Damage;     // OnDamageReceived → RET
+MemoryPatch patch_KoState;    // IsMeleeKnockoutState → RET0
+MemoryPatch patch_NotKo;      // IsNotMeleeKnockout → RET1
+MemoryPatch patch_IsAlive1;   // IsAlive → RET1
+MemoryPatch patch_IsAlive2;   // get_IsAlive → RET1
+MemoryPatch patch_IsAlive3;   // get_GameObjectIsAlive → RET1
+MemoryPatch patch_DeadSync;   // PedDeadSyncSystem.OnUpdate → RET
+MemoryPatch patch_ProcessDead;// PedProcessDeadSystem.OnUpdate → RET
+MemoryPatch patch_DeathUI1;   // HudDeathCreateSystem.OnUpdate → RET
+MemoryPatch patch_DeathUI2;   // HudDeathWatchChangesSystem.OnUpdate → RET
+MemoryPatch patch_DeathUI3;   // HudDeathInitializeOtherSystem.OnUpdate → RET
+// patch_PedKill et patch_GhostBullet sont déjà déclarés plus bas (GHOST MODE).
+
+// -- STAMINA --
+MemoryPatch patch_StaminaLose;    // SetStaminaLose → RET
+MemoryPatch patch_StaminaRestore; // RemoveStaminaLose → RET
+MemoryPatch patch_CanSprint;      // RemoveCanSprint → RET
+MemoryPatch patch_UseStamina;     // UseStamina → RET
+MemoryPatch patch_ConsumeStamina; // ConsumeStamina → RET
+MemoryPatch patch_HasStamina;     // HasEnoughStamina → RET1
+
+// -- SANTE RESEAU (bloque degats serveur) --
+MemoryPatch patch_MaxHealthBonus; // UpdatePlayerHealth #1 → RET
+MemoryPatch patch_FastRegen;      // UpdatePlayerHealth #2 → RET
+
+// -- ACCES ADMIN --
+MemoryPatch patch_GetLevel;    // GetAccessLevel → RET2
+MemoryPatch patch_HasLevel;    // HasAccessLevel → RET1
+MemoryPatch patch_HasRights;   // HasAccessRights (LocalPlayer) → RET1
+MemoryPatch patch_HasRights2;  // HasAccessRights (PlayerInfoStorage) → RET1
+MemoryPatch patch_SyncBlock;   // AccessLevelSyncSystem.OnUpdate → RET
+MemoryPatch patch_InitBlock;   // AccessLevelInitializeSystem.OnUpdate → RET
+MemoryPatch patch_StateBlock;  // AccessLevelStateSystem.OnUpdate → RET
+MemoryPatch patch_UpdateBlock; // AccessLevelUpdateSystem.OnUpdate → RET
+MemoryPatch patch_ToggleBlock; // AccessLevelToggleGameObjectsSystem.OnUpdate → RET
+MemoryPatch patch_SocRights1;  // SocialEvents.HasAccessRightsTo #1 → RET1
+MemoryPatch patch_SocRights2;  // SocialEvents.HasAccessRightsTo #2 → RET1
+MemoryPatch patch_SocRights3;  // SocialEvents.HasAccessRightsForAll → RET1
+
+
+// -- ANTI-ARREST --
+MemoryPatch patch_Handcuff1, patch_Handcuff2, patch_Jail1, patch_JailTimer;
+
+// -- REPUTATION --
+MemoryPatch patch_LockRep;     // Lock Reputation → RET
+
+// -- MOUVEMENT --
+MemoryPatch patch_SuperSpeed;   // Animator.get_speed → 5.0f (run+x5)
+MemoryPatch patch_SuperJump;    // get_Gravity → -0.5f (super jump)
+MemoryPatch patch_LowGravity;   // get_Gravity → 0.1f (low gravity)
+
+// -- COMBAT --
+MemoryPatch patch_OnePunch;     // GetAverageDamage → 999999
+MemoryPatch patch_WeaponDamage; // WeaponDamageParameters → dégâts augmentés
+MemoryPatch patch_HeadshotMult; // HeadshotDamageMultiplier → 10x
+MemoryPatch patch_MeleeDamage;  // Melee damage → 999999
+
+// -- ANTI-KNOCKOUT --
+MemoryPatch patch_UnconsciousKO; // SetUnconsciousKnockout → RET
+MemoryPatch patch_MeleeKOForce;  // ApplyMeleeKnockoutForce → RET
+MemoryPatch patch_RagDollState;  // RagDollState.UpdateState → RET
+MemoryPatch patch_KnockoutSync;  // PedViewKnockoutSystem.OnUpdate → RET (bloque KO serveur)
+
+// -- GOD MODE V2 : ANIM KO / MORT / UNCONSCIOUS (V154) --
+// Nouveaux patches identifiés depuis Assembly-CSharp pour bloquer la chaîne
+// animation/état "knockedout/unconscious/dead" qui passait avant et causait
+// l'animation KO + dégâts visibles. Toggles intégrés dans case 13.
+MemoryPatch patch_UnconsciousDetect;   // PedViewHealthUnconsciousDetectSystem.OnUpdate @ 0x2EB63A8 → RET
+MemoryPatch patch_MeleeKnockoutCleanup;// MeleeCombatKnockoutCleanupSystem.OnUpdate @ 0x3067544 → RET
+MemoryPatch patch_DeadKnockoutRestore; // PedViewDeadKnockoutRestoreSystem.OnUpdate @ 0x2EB3020 → RET
+
+// -- GHOST MODE (tout passe au travers) --
+MemoryPatch patch_GhostBullet; // WeaponAttackReceiveSystem.OnUpdate → RET (bloque balles)
+MemoryPatch patch_GhostMelee;  // WeaponAttackMeleeReceiveSystem.OnUpdate → RET (bloque punches)
+MemoryPatch patch_PedKill;     // PedKillSystem.OnUpdate → RET (bloque kill local)
+MemoryPatch patch_PedRevive;   // PedReviveSyncSystem.OnUpdate → RET (bloque respawn)
+
+// -- ANTI-DEATH UI --
+MemoryPatch patch_HudDeathCreate;    // HudDeathCreateSystem.OnUpdate → RET
+MemoryPatch patch_HudDeathInit;      // HudDeathInitializeOtherSystem.OnUpdate → RET
+MemoryPatch patch_HudDeathWatch;     // HudDeathWatchChangesSystem.OnUpdate → RET
+
+// -- ADMIN CROWN --
+MemoryPatch patch_AdminIcon, patch_AccessLevel;
+
+// -- ADMIN DIPLOMA --
+MemoryPatch patch_DiplomaPanel, patch_DiplomaCheck, patch_DiplomaPenalty, patch_DiplomaPardon;
+MemoryPatch patch_DiplomaClear, patch_DiplomaHistory, patch_DiplomaSync1, patch_DiplomaSync2;
+
+// -- ADMIN PANELS --
+MemoryPatch patch_RateAdmin, patch_FactionSurvey;
+
+// -- ADMIN PROTECTION --
+MemoryPatch patch_RemoveRightsH, patch_ChangeAccessH;
+MemoryPatch patch_Kick1, patch_Kick2, patch_Kick3, patch_Ban1, patch_Ban2, patch_Mute1;
+MemoryPatch patch_Warn1, patch_Warn2, patch_Warn3;
+MemoryPatch patch_Teleport1, patch_Teleport2, patch_Teleport3, patch_Teleport4;
+MemoryPatch patch_Teleport5, patch_Teleport6, patch_Teleport7;
+
+// -- ADMIN CHAT --
+MemoryPatch patch_AdminChatCreate, patch_AdminChatInitUi, patch_AdminChatAddMsg;
+MemoryPatch patch_AdminChatAddSync, patch_AdminChatSendSync, patch_AdminChatToggle;
+MemoryPatch patch_AdminChatCloseSync, patch_AdminChatCreateSync;
+
+
+// -- ADMIN DIPLOMA SYSTEMS --
+MemoryPatch patch_DiplomaPageResult, patch_DiplomaCreateSys, patch_DiplomaInitUiSys;
+MemoryPatch patch_DiplomaPardonCreate, patch_DiplomaPardonInit;
+MemoryPatch patch_DiplomaPenaltyCreate, patch_DiplomaPenaltyInit;
+MemoryPatch patch_DiplomaResponseSync;
+
+// -- RATE ADMIN SYSTEMS --
+MemoryPatch patch_RateAdminCreate, patch_RateAdminInitUi, patch_RateAdminSend;
+MemoryPatch patch_RateAdminReason, patch_RateAdminStars;
+
+// -- CHAT ACTIONS PANEL --
+MemoryPatch patch_ChatActionsCreate, patch_ChatActionsInit;
+
+// -- FACTION SURVEY SYSTEMS --
+MemoryPatch patch_FactionSurveyCreate, patch_FactionSurveyInitUi;
+MemoryPatch patch_FactionSurveyInfoClick, patch_FactionSurveyCleanup, patch_FactionSurveyResponse;
+
+
+// -- AIMBOT --
+MemoryPatch patch_NoRecoil;     // CameraRecoil → RET
+MemoryPatch patch_RapidFire;    // get_FireRate → 0.001f
+MemoryPatch patch_InfAmmo;      // WeaponAmmoDecreaseSystem.OnUpdate → RET
+MemoryPatch patch_AttackEnd;    // WeaponAttackEndSystem.OnUpdate → RET (crée le component AmmoDecrease)
+MemoryPatch patch_InfAmmoInv;   // PedWeaponAmmoRemoveSystem.OnUpdate → RET (inventaire)
+MemoryPatch patch_InfAmmoSync;  // PedWeaponRemoveAmmoSyncSystem.OnUpdate → RET (sync inventaire)
+MemoryPatch patch_InfAmmoSync2; // PedWeaponAmmoSyncSystem.OnUpdate → RET (sync ammo depuis serveur)
+MemoryPatch patch_InfAmmoSync3; // PedWeaponGiveAmmoSyncSystem.OnUpdate → RET (bloque serveur forçant 0)
+MemoryPatch patch_NoReload;     // WeaponReloadStartSystem.OnUpdate → RET
+
+// -- VEHICULE --
+MemoryPatch patch_VehicleNitro;  // get_MaxSpeed → 200.0f
+MemoryPatch patch_VehicleWater;  // Water buoyancy → disable
+MemoryPatch patch_VehicleSuperSpeed; // Vehicle speed boost
+
+// -- ANTI FALL ANIMATION --
+MemoryPatch patch_FallStateCanEnter;
+MemoryPatch patch_FallStateMeleeCanEnter;
+MemoryPatch patch_FallStateRangeCanEnter;
+
+// -- PLAYER SCALE --
+bool g_PlayerScaleEnabled = false;
+float g_PlayerScale = 1.0f;
+
+// -- FLY HACK --
+bool g_FlyEnabled = false;
+
+// -- CAMERA FOV --
+bool g_CameraFovEnabled = false;
+float g_CameraFov = 60.0f;
+
+// -- BULLET DISTANCE --
+bool g_BulletDistanceEnabled = false;
+
+// -- DAMAGE BOOST --
+bool g_DamageBoostEnabled = false;
+float g_DamageMultiplier = 1.2f;
+
+// -- AIM BOT MODES --
+// 0=off, 1=head, 2=torso
+int g_AimBotMode = 0;
+// 0=off, 1=head, 2=torso (silent = pas de visée caméra, redirige le tir)
+int g_SilentAimMode = 0;
+float g_AimFov = 90.0f;
+bool g_AimVisibleOnly = false;
+bool g_VisCheckOutline = false;
+bool g_VisCheckShading = false;
+
+// -- ESP LINE COLOR (couleur custom) --
+unsigned int g_EspLineColor = 0xFF00FFFF; // cyan default
+
+// -- VEHICLE WALLHACK --
+bool g_VehicleWallhack = false;
+
+// -- ÉCONOMIE --
+bool g_FarmMoneyEnabled = false;
+bool g_AutoWorkEnabled = false;
+bool g_AutoClickEnabled = false;
+bool g_StealArmyMaterialsEnabled = false;
+
+// -- TP DYNAMIQUE --
+bool g_TpEnemy10sEnabled = false;
+bool g_MeuDestinoEnabled = false;
+
+// -- FOLLOW SPEED --
+float g_FollowSpeed = 10.0f;
+
+// Forward déclaration : patch_AutoCheckpoint est défini plus bas mais utilisé
+// dans les threads d'automatisation ci-dessous.
+extern MemoryPatch patch_AutoCheckpoint;
+
+// ============================================================================
+// THREADS D'AUTOMATISATION (TP 10s, Farm Money, Auto Work)
+// ----------------------------------------------------------------------------
+// Chaque thread tourne en arrière-plan et exécute l'action périodiquement
+// quand son flag global est activé. Les threads sont créés au boot et restent
+// en vie pour toute la durée de l'app. Quand le flag est OFF, le thread sleep
+// et ne fait rien.
+// ============================================================================
+#include <thread>
+#include <chrono>
+
+static void thread_TpEnemy10s() {
+  while (true) {
+    if (g_TpEnemy10sEnabled) {
+      float tx = 0, ty = 0, tz = 0;
+      if (Esp_GetBestTargetWorld(&tx, &ty, &tz)) {
+        Teleport_ToPosition(tx, ty + 1.5f, tz);
+        LOGI(DBG ": ⏱ TP Enemy 10s → (%.1f, %.1f, %.1f)", tx, ty, tz);
+      }
+      std::this_thread::sleep_for(std::chrono::seconds(10));
+    } else {
+      std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+  }
+}
+
+// Farm Money et Auto Work : ces fonctions reposaient à l'origine sur des TPs
+// répétitifs qui ne marchaient pas vraiment. La vraie méthode (Malvado-style)
+// est d'activer patch_AutoCheckpoint via le toggle 237 → tous les checkpoints
+// de mission/job/event sont considérés "atteints" automatiquement.
+//
+// Les flags g_FarmMoneyEnabled / g_AutoWorkEnabled / g_StealArmyMaterialsEnabled
+// activent ce même patch (mécanisme partagé).
+// FIX V161 : `MemoryPatch::Modify()` est un TOGGLE (apply ↔ restore), pas un
+// "ensure applied". Appeler Modify() toutes les 2s faisait flicker le patch
+// → AutoCheckpoint ne marchait quasi pas. Désormais on applique UNE FOIS à
+// l'activation, et on restore quand tous les flags repassent à OFF.
+static void thread_AutoMissionProgress() {
+  bool patchApplied = false;
+  while (true) {
+    bool anyActive = g_FarmMoneyEnabled || g_AutoWorkEnabled
+                  || g_StealArmyMaterialsEnabled;
+    if (anyActive && b_PatchesReady) {
+      if (!patchApplied && patch_AutoCheckpoint.isValid()) {
+        patch_AutoCheckpoint.Modify();   // apply (passage OFF→ON)
+        patchApplied = true;
+        LOGI(DBG ": 🎯 AutoCheckpoint APPLIED (auto via FarmMoney/AutoWork/StealArmy)");
+      }
+    } else if (patchApplied) {
+      if (patch_AutoCheckpoint.isValid()) {
+        patch_AutoCheckpoint.Restore();  // restore (passage ON→OFF)
+      }
+      patchApplied = false;
+      LOGI(DBG ": 🎯 AutoCheckpoint RESTORED (tous flags OFF)");
+    }
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+  }
+}
+
+static void thread_MeuDestino() {
+  // Auto-TP au slot 0 toutes les 5 secondes
+  while (true) {
+    if (g_MeuDestinoEnabled) {
+      Teleport_GoSlot(0);
+      std::this_thread::sleep_for(std::chrono::seconds(5));
+    } else {
+      std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+  }
+}
+
+// V162.1 : Player Scale en mode DIRECT (sans hook).
+// Le hook sur Transform.set_localScale_Injected était appelé 1000+ fois/frame
+// pour TOUS les Transforms du jeu → SIGSEGV. Nouvelle stratégie : un thread
+// bg réapplique la scale UNIQUEMENT sur le Transform du local, toutes les
+// 500ms (assez fréquent pour résister aux respawns/anim, mais zéro overhead
+// par frame). Le set_localScale_Injected est résolu lazy à la première
+// application.
+typedef void (*Transform_set_localScale_Injected_t)(void* self, float* value);
+static Transform_set_localScale_Injected_t fn_set_localScale = nullptr;
+static float g_LastAppliedScale = 1.0f;
+
+static void thread_PlayerScale() {
+  while (true) {
+    if (g_PlayerScaleEnabled && fabsf(g_PlayerScale - 1.0f) > 0.01f) {
+      void* tr = Esp_GetLocalTransform();
+      if (tr) {
+        if (!fn_set_localScale) {
+          fn_set_localScale = (Transform_set_localScale_Injected_t)(g_base + 0x43070B4);
+        }
+        if (fn_set_localScale) {
+          float v[3] = { g_PlayerScale, g_PlayerScale, g_PlayerScale };
+          fn_set_localScale(tr, v);
+          g_LastAppliedScale = g_PlayerScale;
+        }
+      }
+    } else if (fabsf(g_LastAppliedScale - 1.0f) > 0.01f) {
+      // Restore : revient à scale 1 quand l'utilisateur désactive.
+      void* tr = Esp_GetLocalTransform();
+      if (tr && fn_set_localScale) {
+        float v[3] = { 1.0f, 1.0f, 1.0f };
+        fn_set_localScale(tr, v);
+        g_LastAppliedScale = 1.0f;
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  }
+}
+
+static void startAutomationThreads() {
+  static bool started = false;
+  if (started) return;
+  started = true;
+  std::thread(thread_TpEnemy10s).detach();
+  std::thread(thread_AutoMissionProgress).detach();
+  std::thread(thread_MeuDestino).detach();
+  std::thread(thread_PlayerScale).detach();
+  LOGI(DBG ": Automation threads started (TpEnemy10s, AutoMissionProgress, MeuDestino, PlayerScale)");
+}
+
+
+// -- RESEAU --
+MemoryPatch patch_NoNetKick;  // CloseConnectionGroup #1 → RET1
+MemoryPatch patch_NoNetKick2; // CloseConnectionGroup #2 → RET1
+MemoryPatch patch_NoNetKick3; // CloseConnectionGroup #3 → RET1
+
+// -- MONDE --
+MemoryPatch patch_DayMode; // get_Hour → 12 (midi permanent)
+
+// -- TUTORIEL SKIP --
+MemoryPatch patch_SoftTutorial, patch_HardTutorial;
+
+// -- CINEMATIQUES / CUTSCENES --
+MemoryPatch patch_SkipCutscene;     // StartCuteSceneSystem.OnUpdate → RET (bloque toute cinématique)
+MemoryPatch patch_SkipFirstJail;    // FirstTimeInJailStartSyncSystem.OnUpdate → RET (cinématique première fois en prison)
+
+// -- ZONE VERTE RENFORCÉE --
+MemoryPatch patch_AttackNotAllowedRead; // WeaponAttackNotAllowedDatagram.Read → RET (bloque packets serveur)
+
+// -- GREEN ZONE BYPASS (tirer partout) --
+MemoryPatch patch_AttackNotAllowed;
+
+// -- FLY / SUPER JUMP / BULLET DISTANCE / CAMERA FOV --
+MemoryPatch patch_FlyGravity;     // get_Gravity → 0.0f (fly)
+MemoryPatch patch_BulletDist;     // Weapon range → 5000
+MemoryPatch patch_CameraFov;      // Camera FOV
+MemoryPatch patch_DamageBoost;    // Weapon damage multiplier
+
+// -- CHECKPOINTS VIENNENT AU JOUEUR (Malvado-style) --
+// Patch CheckForPlayerPedAlreadyOnCheckpoint → RET1 = retourne true partout.
+// Le QuestStepGoToCheckpointStartSystem considère que le joueur est déjà
+// sur le checkpoint et progresse la quête immédiatement (jobs, events, etc.).
+MemoryPatch patch_AutoCheckpoint;  // QuestStepGoToCheckpointStart.CheckForPlayerPedAlreadyOnCheckpoint @ 0x2E2F568 → RET1
+MemoryPatch patch_AutoCheckpoint2; // QuestStepGoToParkingStart.CheckForPlayerPedAlreadyOnCheckpoint similaire
+
+// -- VEHICLE COLLISION BOOST --
+MemoryPatch patch_CarCollision;
+
+// -- VOITURE INDESTRUCTIBLE --
+// VehicleDamageSystem.OnUpdate @ 0x2B6C08C : RET => le système qui applique
+// les dégâts aux véhicules ne tourne plus côté client. Le serveur peut quand
+// même calculer des dégâts en parallèle, mais visuellement notre voiture
+// reste intacte (pas de fumée, pas de moteur cassé).
+MemoryPatch patch_VehicleNoDamage;
+
+// -- VEHICLE RAMMING + ANTI-ÉLASTIQUE --
+// VehicleElementExtrapolateSystem.OnUpdate @ 0x26443C8 : RET => le système
+// qui repositionne les véhicules selon les snapshots serveur ne tourne plus.
+// Conséquences voulues :
+//  - Quand on pousse une voiture en noclip, elle reste où on la laisse
+//    (plus de rebond élastique vers la position serveur).
+//  - Quand on ramme une voiture avec la nôtre, la victime décolle vraiment
+//    et garde son inertie côté client.
+// Effet de bord : les voitures conduites par les autres joueurs ne bougent
+// plus côté client (elles ne peuvent pas être interpolées). Le tradeoff vaut
+// le coup pour les 2 features qu'on débloque.
+MemoryPatch patch_VehicleNoExtrapolate;
+
+// -- SUPER SPEED PED --
+// On hook CharacterActor.set_PlanarVelocity (0x31CA99C) pour multiplier la
+// vitesse horizontale du local ped par g_SpeedMultiplier quand activé.
+// Voir hook_SetPlanarVelocity plus bas.
+bool g_SuperSpeedEnabled = false;
+// Multiplicateur de vitesse contrôlable depuis le slider 143 (valeur menu / 100).
+// Default 2.0x : assez rapide pour sentir l'effet sans tomber dans le vide en
+// rebondissant contre les murs (3.0x faisait passer le perso à travers les
+// collisions). L'utilisateur peut monter à 5.0x s'il veut prendre le risque.
+float g_SpeedMultiplier = 1.0f; // 1.0 = vitesse normale (curseur 10/20)
+
+// -- NOCLIP (WALK THROUGH WALLS) --
+MemoryPatch patch_NoCollider;   // StableCollideAndSlide   : RET (skip Lightbug collide)
+MemoryPatch patch_NoCollider2;  // UnstableCollideAndSlide : RET (skip Lightbug collide)
+MemoryPatch patch_NoCollider3;  // RemovePenetration → RET0 (pas de repousse)
+MemoryPatch patch_NoCollider4;  // PedViewCapsuleEnabledSystem.OnUpdate : force capsuleCollider.enabled=false (DESACTIVE PhysX Unity)
+
+
+// -- ANTI-CHEAT --
+MemoryPatch patch_AC;       // CheckIntegrity #1
+MemoryPatch patch_AC2;      // CheckIntegrity #2
+MemoryPatch patch_AC3;      // CheckIntegrity #3
+MemoryPatch patch_AC_Sig1;  // VerifySignature #1
+MemoryPatch patch_AC_Sig2;  // VerifySignature #2
+MemoryPatch patch_AC_Hash;  // VerifyHash
+
+// -- ANTI-BAN (protection contre les admins) --
+MemoryPatch patch_AntiBan1; // FreeCamUiCheckTargetSystem.OnUpdate → RET (bloque spectate)
+MemoryPatch patch_AntiBan2; // FreeCamUiTrackPlayerDimension.OnUpdate → RET (bloque tracking)
+
+// === NOCLIP via DOBBY HOOKS ============================================
+// Approche INSTANTANEE :
+// - CharacterActor.PreSimulationUpdate(dt) -> appele CHAQUE FRAME par Unity
+//   pour chaque CharacterActor (= peds Lightbug, PAS les voitures).
+//   On y force RigidbodyComponent.IsKinematic = true a chaque frame.
+//   Quand on desactive : on force kinematic = false pendant ~1s pour restaurer.
+// - ColliderComponent3D.InternalHitFilter -> ret false pour traverser les murs.
+bool g_NoClipEnabled = false;
+static int64_t g_NoClipRestoreUntilMs = 0;
+
+static int64_t noclip_now_ms() {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+// Pointeurs vers les fonctions IL2CPP appelees depuis le hook.
+typedef void *(*GetRigidbodyComponent_t)(void *self);          // 0x31BCA18
+static GetRigidbodyComponent_t fn_GetRigidbodyComponent = nullptr;
+typedef void (*SetIsKinematic_t)(void *rb, bool value);        // 0x31B7BBC
+static SetIsKinematic_t fn_SetIsKinematic = nullptr;
+
+// 1) CharacterActor.PreSimulationUpdate(self, dt) @ 0x31BF874
+// Appele CHAQUE FRAME pour chaque CharacterActor (peds Lightbug).
+// -> force IsKinematic immediatement = activation/desactivation INSTANTANEES.
+typedef void (*PreSimulationUpdate_t)(void *self, float dt);
+static PreSimulationUpdate_t orig_PreSimulationUpdate = nullptr;
+static void hook_PreSimulationUpdate(void *self, float dt) {
+  // Safety: null check avant tout accès mémoire
+  if (!self) { if (orig_PreSimulationUpdate) orig_PreSimulationUpdate(self, dt); return; }
+
+  if (fn_GetRigidbodyComponent && fn_SetIsKinematic) {
+    void *rb = fn_GetRigidbodyComponent(self);
+    if (rb) {
+      if (g_NoClipEnabled || Esp_IsAutoFollowActive()) {
+        fn_SetIsKinematic(rb, true);
+      } else {
+        // Toujours restaurer kinematic=false quand noclip est OFF
+        // (soit pendant la période de burst de 1s, soit en permanence)
+        fn_SetIsKinematic(rb, false);
+      }
+    }
+  }
+
+  // Enregistrer le local actor pour ESP (seulement si c'est le local)
+  Esp_NotifyLocalActor(self);
+  if (Esp_IsEnabled()) Esp_RegisterActor(self);
+
+  orig_PreSimulationUpdate(self, dt);
+  // NOTE: Esp_FrameTick() est appelé dans hook_FireOnPreCull (60Hz render).
+  // On ne l'appelle PAS ici pour éviter les doubles appels par frame.
+}
+
+// Hook ECS qui tourne SUR LE MAIN THREAD UNITY à chaque frame, indépendamment
+// de l'état du local CharacterActor (à pied ou en voiture). C'est le système
+// qui sync la position du joueur sur la mini-map, donc il tick en continu.
+// On en profite pour faire le Esp_FrameTick : matrices caméra, scan ECS,
+// projection world->screen. Tout reste sur le main thread → thread-safe IL2CPP.
+//
+// HudMapPlayerWorldPositionSyncSystem.OnUpdate @ 0x2517A18
+typedef void (*HudMapTick_t)(void *self, float deltaTime);
+static HudMapTick_t orig_HudMapTick = nullptr;
+static void hook_HudMapTick(void *self, float deltaTime) {
+  orig_HudMapTick(self, deltaTime);
+  if (Esp_IsEnabled()) Esp_FrameTick();
+}
+
+// === Hook Camera.FireOnPreCull @ 0x41F61AC ===
+// Cette fonction static Unity est appelée à CHAQUE frame de rendu, juste
+// avant que la caméra ne render la scène. C'est le tick idéal pour ESP :
+//  - Tourne au framerate du jeu (60Hz typique), pas le FixedUpdate (50Hz)
+//  - Tourne TOUJOURS, y compris quand le local est en voiture/avion
+//    (contrairement à hook_PreSimulationUpdate qui requiert que le
+//     CharacterActor du local soit enabled).
+// Signature présumée : void FireOnPreCull(UnityEngine.Camera cam).
+typedef void (*FireOnPreCull_t)(void *cam);
+static FireOnPreCull_t orig_FireOnPreCull = nullptr;
+static void hook_FireOnPreCull(void *cam) {
+  orig_FireOnPreCull(cam);
+  if (Esp_IsEnabled()) Esp_FrameTick();
+}
+
+// --- HOOK CreateMapGpsCheckpoint.ctor @ 0x282A168 ---
+static float g_LastWaypointX = 0.0f, g_LastWaypointY = 0.0f, g_LastWaypointZ = 0.0f;
+static bool g_HasWaypoint = false;
+typedef void (*CreateMapGpsCheckpoint_ctor_t)(void* self, float x, float y, float z);
+static CreateMapGpsCheckpoint_ctor_t orig_CreateMapGpsCheckpoint_ctor = nullptr;
+static void hook_CreateMapGpsCheckpoint_ctor(void* self, float x, float y, float z) {
+  g_LastWaypointX = x;
+  g_LastWaypointY = y;
+  g_LastWaypointZ = z;
+  g_HasWaypoint = true;
+  LOGI(DBG ": 📍 WAYPOINT capté via ctor : (%.2f, %.2f, %.2f)", x, y, z);
+  if (orig_CreateMapGpsCheckpoint_ctor) orig_CreateMapGpsCheckpoint_ctor(self, x, y, z);
+}
+
+// 1bis) CharacterActor.set_Velocity(self, Vector3 value) @ 0x31CA8F4
+// C'est le point d'application FINAL de la vitesse composite (Planar+Vertical)
+// avant que Lightbug ne la pousse vers le Rigidbody Unity. Multiplier X/Z ici
+// fait courir le ped plus vite SANS toucher la gravité (Y conservé).
+//
+// ARM64 ABI : self dans X0, Vector3 (HFA-3) passé dans S0/S1/S2.
+typedef void (*SetVelocity_t)(void *self, float x, float y, float z);
+static SetVelocity_t orig_SetVelocity = nullptr;
+static int g_SpeedLogCount = 0;
+
+// Fly mode : utilise g_FlyEnabled déclaré plus haut (ligne 242).
+// Quand actif, on bloque la chute (vy clampé à >= 0) pour pouvoir flotter
+// / monter en sautant. Désactive aussi la multiplication de vitesse en l'air.
+
+// Détecte si le ped est au sol via le field <IsGrounded>k__BackingField à
+// l'offset +0x188 du CharacterActor (Lightbug). Lecture directe en mémoire :
+// fiable car mis à jour par Lightbug chaque frame avant set_Velocity.
+//   - grounded=true  : le ped touche un sol → speed mult OK
+//   - grounded=false : ped en chute/saut → PAS de multiplication (sinon
+//                       propulsion latérale à travers la map)
+// V18: <IsGrounded>k__BackingField moved to 0x1A0 (was 0x188 in V16/V17)
+// Verified via dump_v18.cs: "private bool <IsGrounded>k__BackingField; // 0x1A0"
+static inline bool isCharacterGrounded(void *self) {
+  if (!self) return true; // safe default = pas de mult
+  return *((uint8_t*)self + 0x1A0) != 0;
+}
+
+static void hook_SetVelocity(void *self, float x, float y, float z) {
+  bool grounded = isCharacterGrounded(self);
+
+  // Fly mode : on bloque la chute (vy ne peut pas être négatif). Le saut
+  // (vy positif) reste autorisé → utilisateur saute pour monter.
+  // Filtre sur le LOCAL uniquement pour ne pas faire flotter les autres.
+  // V158 : On active aussi ce bloc pendant l'Auto-Follow pour éviter de tomber
+  // si la cible est temporairement perdue (on reste stationnaire en l'air).
+  if ((g_FlyEnabled || Esp_IsAutoFollowActive()) && Esp_IsLocalActor(self) && y < 0.0f) {
+    y = 0.0f;
+  }
+
+  // Speed mult : seulement au sol. Évite le bug bordure/saut → catapulte.
+  if (g_SuperSpeedEnabled && grounded) {
+    if (g_SpeedLogCount < 5) {
+      LOGI(DBG ": set_Velocity[%d] in=(%.2f,%.2f,%.2f) mult=%.1f grounded=1",
+           g_SpeedLogCount, x, y, z, g_SpeedMultiplier);
+      g_SpeedLogCount++;
+    }
+    x *= g_SpeedMultiplier;
+    z *= g_SpeedMultiplier;
+  } else if (!g_SuperSpeedEnabled) {
+    g_SpeedLogCount = 0;
+  }
+  orig_SetVelocity(self, x, y, z);
+}
+
+// 1ter) Idem sur set_PlanarVelocity @ 0x31CA99C en backup. Certains chemins
+// Lightbug (Unstable state, glissades) appellent set_PlanarVelocity directement
+// sans passer par set_Velocity. On hook les deux pour couvrir tous les cas.
+typedef void (*SetPlanarVelocity_t)(void *self, float x, float y, float z);
+static SetPlanarVelocity_t orig_SetPlanarVelocity = nullptr;
+static void hook_SetPlanarVelocity(void *self, float x, float y, float z) {
+  // Speed mult seulement au sol (lecture directe du field IsGrounded).
+  if (g_SuperSpeedEnabled && isCharacterGrounded(self)) {
+    x *= g_SpeedMultiplier;
+    z *= g_SpeedMultiplier;
+  }
+  orig_SetPlanarVelocity(self, x, y, z);
+}
+
+// ============================================================================
+// HOOK Camera.set_fieldOfView @ 0x42AA700
+// Quand g_CameraFovEnabled=true, force la valeur à g_CameraFov (override Unity).
+// Sinon laisse passer normalement.
+// ARM64 ABI : self dans X0, value (float) dans S0.
+// ============================================================================
+typedef void (*SetFieldOfView_t)(void* self, float value);
+static SetFieldOfView_t orig_SetFieldOfView = nullptr;
+static void hook_SetFieldOfView(void* self, float value) {
+  if (g_CameraFovEnabled) {
+    value = g_CameraFov;
+  }
+  orig_SetFieldOfView(self, value);
+}
+
+// ============================================================================
+// HOOK Transform.set_localScale_Injected @ 0x43070B4
+// Quand g_PlayerScaleEnabled=true ET self == local actor's Transform,
+// multiplie l'échelle par g_PlayerScale.
+//
+// V162 FIX : avant on multipliait TOUS les Transforms du jeu (UI, environnement,
+// autres peds, véhicules…) ce qui rendait le menu inutilisable dès qu'on
+// activait Taille X. Maintenant on compare `self` au Transform du local actor
+// (caché par Esp_GetLocalTransform()) → SEUL le local change de taille.
+//
+// ARM64 ABI : self dans X0, value pointer dans X1.
+// ============================================================================
+struct Vec3Ref { float x, y, z; };
+typedef void (*SetLocalScaleInjected_t)(void* self, Vec3Ref* value);
+static SetLocalScaleInjected_t orig_SetLocalScaleInjected = nullptr;
+static void hook_SetLocalScaleInjected(void* self, Vec3Ref* value) {
+  // Filtre : si on n'a pas encore identifié le local OU si self n'est pas
+  // son Transform, on passe la valeur d'origine sans modif (= comportement
+  // natif Unity). Coupséquence : tant que l'utilisateur n'a pas ouvert l'ESP
+  // au moins 1 fois, le scaling ne s'applique pas → évite de casser l'UI au
+  // boot. Dès que le local est identifié (lors du 1er FrameTick ou via le
+  // hook PreSimulationUpdate), le scaling fonctionne.
+  if (g_PlayerScaleEnabled && value && g_PlayerScale != 1.0f) {
+    void* localTr = Esp_GetLocalTransform();
+    if (localTr && self == localTr) {
+      Vec3Ref scaled = { value->x * g_PlayerScale,
+                         value->y * g_PlayerScale,
+                         value->z * g_PlayerScale };
+      orig_SetLocalScaleInjected(self, &scaled);
+      return;
+    }
+  }
+  orig_SetLocalScaleInjected(self, value);
+}
+
+// ============================================================================
+// DEVICE ID FAKER + WIPE APP DATA (toggle 153 + bouton 154)
+// ----------------------------------------------------------------------------
+// STRATÉGIE COMPLÈTE pour bypass un ban OneState :
+//
+// 1) WIPE APP DATA au prochain démarrage : on simule une "fresh install" en
+//    supprimant tous les fichiers persistants du jeu :
+//    - shared_prefs/  → tokens Firebase, SharedPreferences custom
+//    - files/         → PlayerPrefs Unity (UUID applicatif stocké), caches
+//    - databases/     → SQLite Firebase Installations IID
+//    - cache/         → divers caches d'analytics
+//    Ces fichiers contiennent des UUID applicatifs persistants qu'utilise
+//    OneState pour t'identifier MÊME si tu changes le device ID Unity.
+//    Wiper = nouveau Firebase IID, nouveau PlayerPrefs, nouveau "first launch".
+//
+// 2) Hook UnityEngine.SystemInfo.* pour faker tout le fingerprint Unity :
+//    - get_deviceUniqueIdentifier (le principal)
+//    - get_deviceModel / get_deviceName (signature secondaire)
+//
+// 3) Le toggle 153 écrit un FLAG-FILE persistant `wipe_pending` dans
+//    /data/data/<pkg>/cache/. Le wipe ne s'exécute PAS immédiatement (ça
+//    crasherait Unity en cours de run) mais au PROCHAIN démarrage du jeu :
+//    `wipeAppDataIfFlagged()` est appelée tout au début de hack_thread,
+//    AVANT que Unity finisse d'init PlayerPrefs.
+//
+// 4) Le hook get_deviceUniqueIdentifier reste actif pendant toute la session
+//    pour que les calls runtime à l'identifiant retournent le fake.
+// ============================================================================
+bool g_DeviceIdFaker = false;
+static char g_FakeDeviceId[64] = "";
+// Buffer permettant aux hooks SystemInfo.get_deviceModel/Name de retourner
+// une valeur fake stable (généré au démarrage si toggle ON).
+static char g_FakeDeviceModel[64] = "";
+static char g_FakeDeviceName[64]  = "";
+
+// Récupère le dossier /data/data/<pkg>/ via /proc/self/cmdline + format Android.
+// Retourne la longueur écrite (sans NUL), 0 si erreur.
+static size_t getMyAppDataDir(char* out, size_t outSize) {
+  if (outSize < 32) return 0;
+  // Lire le package depuis /proc/self/cmdline (premier zero-terminated string).
+  FILE* f = fopen("/proc/self/cmdline", "rb");
+  if (!f) return 0;
+  char pkg[256] = {0};
+  size_t r = fread(pkg, 1, sizeof(pkg) - 1, f);
+  fclose(f);
+  if (r == 0) return 0;
+  pkg[sizeof(pkg) - 1] = 0;
+  // Coupe au premier ':' s'il y en a un (process privé Android).
+  for (size_t i = 0; i < r; i++) if (pkg[i] == ':') { pkg[i] = 0; break; }
+  if (!pkg[0]) return 0;
+  int n = snprintf(out, outSize, "/data/data/%s", pkg);
+  return (n > 0 && (size_t)n < outSize) ? (size_t)n : 0;
+}
+
+// Supprime récursivement tout le contenu de `path` (incluant les sous-dirs)
+// SANS supprimer `path` lui-même. Utilise nftw() = portable, robuste, single-thread.
+#include <ftw.h>
+#include <errno.h>
+#include <sys/stat.h>
+static int rmCallback(const char* fpath, const struct stat* /*sb*/,
+                      int typeflag, struct FTW* ftwbuf) {
+  if (ftwbuf->level == 0) return 0; // skip the root itself
+  if (typeflag == FTW_DP || typeflag == FTW_D) {
+    rmdir(fpath);
+  } else {
+    unlink(fpath);
+  }
+  return 0;
+}
+static void wipeDirContents(const char* path) {
+  // depth-first, follow no symlinks. nopenfd=16 (sufficient for typical app data).
+  nftw(path, rmCallback, 16, FTW_DEPTH | FTW_PHYS);
+}
+
+// Path du flag-file qui survit aux redémarrages (cache/).
+static void getWipeFlagPath(char* out, size_t outSize) {
+  char dataDir[256];
+  size_t l = getMyAppDataDir(dataDir, sizeof(dataDir));
+  if (!l) { out[0] = 0; return; }
+  snprintf(out, outSize, "%s/cache/wipe_pending", dataDir);
+}
+
+// Ecrit le flag : au prochain démarrage on wipe.
+static void scheduleWipeNextBoot() {
+  char path[512]; getWipeFlagPath(path, sizeof(path));
+  if (!path[0]) { LOGI(DBG ": scheduleWipe: dataDir introuvable"); return; }
+  // S'assure que le dossier cache/ existe.
+  char cacheDir[512]; size_t pl = strlen(path);
+  // path = .../cache/wipe_pending → cacheDir = path sans "/wipe_pending"
+  if (pl > 14) {
+    size_t cl = pl - 14;
+    if (cl < sizeof(cacheDir)) {
+      memcpy(cacheDir, path, cl); cacheDir[cl] = 0;
+      mkdir(cacheDir, 0700);
+    }
+  }
+  FILE* f = fopen(path, "wb");
+  if (f) { fwrite("1", 1, 1, f); fclose(f); LOGI(DBG ": Wipe scheduled at %s", path); }
+  else   { LOGI(DBG ": Wipe schedule FAILED at %s (errno=%d)", path, errno); }
+}
+
+// Appelée tout début de hack_thread : si flag présent, wipe shared_prefs/,
+// files/, databases/. On NE wipe PAS lib/ (où se trouve notre lib mod).
+// Puis supprime le flag pour ne pas wiper deux fois.
+static void wipeAppDataIfFlagged() {
+  char flag[512]; getWipeFlagPath(flag, sizeof(flag));
+  if (!flag[0]) return;
+  struct stat st;
+  if (stat(flag, &st) != 0) return; // pas de flag = rien à faire
+  LOGI(DBG ": *** WIPE FLAG DETECTED — simulating fresh install ***");
+  char dataDir[256];
+  if (!getMyAppDataDir(dataDir, sizeof(dataDir))) return;
+  // Liste des sous-dossiers à wiper. Tout ce qui contient des IDs persistants
+  // applicatifs : PlayerPrefs (files/), tokens Firebase (databases/, shared_prefs/),
+  // caches divers d'analytics (cache/, no_backup/, app_*).
+  const char* subdirs[] = {
+    "/files", "/shared_prefs", "/databases", "/cache", "/no_backup",
+    "/app_textures", "/app_webview", "/code_cache",
+  };
+  for (size_t i = 0; i < sizeof(subdirs)/sizeof(subdirs[0]); i++) {
+    char p[512]; snprintf(p, sizeof(p), "%s%s", dataDir, subdirs[i]);
+    LOGI(DBG ": wiping %s ...", p);
+    wipeDirContents(p);
+  }
+  unlink(flag); // consomme le flag → un wipe = un démarrage
+  LOGI(DBG ": *** WIPE COMPLETE — game will see this as a brand new install ***");
+}
+
+// Génère un GUID style "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" en hex random.
+// Stocké dans g_FakeDeviceId. Appelée au boot et chaque fois que l'utilisateur
+// clique le bouton "Régénérer Device ID".
+static void regenerateFakeDeviceId() {
+  static const char* hex = "0123456789abcdef";
+  // Seed PRNG avec time + adresse stack + clock_gettime pour entropie.
+  struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+  uint64_t seed = (uint64_t)time(nullptr) ^ (uint64_t)(uintptr_t)&seed ^
+                  (uint64_t)ts.tv_nsec ^ ((uint64_t)ts.tv_sec << 32);
+  uint64_t s = seed;
+  auto rnd = [&]() {
+    // xorshift64
+    s ^= s << 13; s ^= s >> 7; s ^= s << 17;
+    return (uint32_t)s;
+  };
+  const int groups[] = {8, 4, 4, 4, 12};
+  int idx = 0;
+  for (int g = 0; g < 5; g++) {
+    for (int k = 0; k < groups[g]; k++) {
+      g_FakeDeviceId[idx++] = hex[rnd() & 0xF];
+    }
+    if (g < 4) g_FakeDeviceId[idx++] = '-';
+  }
+  g_FakeDeviceId[idx] = 0;
+  // Génère aussi un model et un name plausibles. On pioche dans une liste
+  // de devices Android réels pour que le fingerprint ait l'air crédible.
+  static const char* models[] = {
+    "SM-G998B", "SM-S908E", "Pixel 7 Pro", "Pixel 6", "ONEPLUS A6013",
+    "M2102J20SG", "Mi 11", "RMX3371", "CPH2451", "SM-A536E",
+    "SM-G991B", "Pixel 8", "23021RAA2Y", "2201116SG", "SM-A546E",
+  };
+  uint32_t mi = rnd() % (uint32_t)(sizeof(models)/sizeof(models[0]));
+  snprintf(g_FakeDeviceModel, sizeof(g_FakeDeviceModel), "%s", models[mi]);
+  // Name = "Phone-XXXX" avec random suffix pour unicité.
+  snprintf(g_FakeDeviceName, sizeof(g_FakeDeviceName),
+           "Phone-%04X", (unsigned)(rnd() & 0xFFFF));
+  LOGI(DBG ": Device fake -> id='%s' model='%s' name='%s'",
+       g_FakeDeviceId, g_FakeDeviceModel, g_FakeDeviceName);
+}
+
+typedef void* (*GetDeviceUniqueIdentifier_t)();
+static GetDeviceUniqueIdentifier_t orig_GetDeviceUniqueIdentifier = nullptr;
+static void* hook_GetDeviceUniqueIdentifier() {
+  if (g_DeviceIdFaker && g_FakeDeviceId[0] != 0) {
+    void* fake = Esp_MakeIl2cppString(g_FakeDeviceId);
+    if (fake) return fake;
+  }
+  return orig_GetDeviceUniqueIdentifier();
+}
+
+// SystemInfo.get_deviceModel @ 0x4301C48
+typedef void* (*GetDeviceModel_t)();
+static GetDeviceModel_t orig_GetDeviceModel = nullptr;
+static void* hook_GetDeviceModel() {
+  if (g_DeviceIdFaker && g_FakeDeviceModel[0] != 0) {
+    void* fake = Esp_MakeIl2cppString(g_FakeDeviceModel);
+    if (fake) return fake;
+  }
+  return orig_GetDeviceModel();
+}
+
+// SystemInfo.get_deviceName @ 0x4301BD0
+typedef void* (*GetDeviceName_t)();
+static GetDeviceName_t orig_GetDeviceName = nullptr;
+static void* hook_GetDeviceName() {
+  if (g_DeviceIdFaker && g_FakeDeviceName[0] != 0) {
+    void* fake = Esp_MakeIl2cppString(g_FakeDeviceName);
+    if (fake) return fake;
+  }
+  return orig_GetDeviceName();
+}
+
+// AuthorizationManager.GetUniqueIdentifier @ 0x2AF9188
+typedef void* (*GetAuthUniqueIdentifier_t)();
+static GetAuthUniqueIdentifier_t orig_GetAuthUniqueIdentifier = nullptr;
+static void* hook_GetAuthUniqueIdentifier() {
+  if (g_DeviceIdFaker && g_FakeDeviceId[0] != 0) {
+    void* fake = Esp_MakeIl2cppString(g_FakeDeviceId);
+    if (fake) return fake;
+  }
+  return orig_GetAuthUniqueIdentifier();
+}
+
+// 2) ColliderComponent3D.InternalHitFilter(self, raycastHit) @ 0x3252120
+// Filtre appele pour CHAQUE hit detecte par Lightbug dans CastBody.
+// En NoClip on ignore SEULEMENT les murs (normales horizontales) et on
+// CONSERVE les hits sur sol/pentes/escaliers (normales verticales). Comme ça
+// le perso traverse les murs mais ne tombe pas à travers le sol quand il y a
+// une montée. Threshold normal.y > 0.5 ≈ pentes jusqu'à 60° (escaliers OK).
+//
+// Layout Unity RaycastHit (struct value) en ARM64 IL2CPP :
+//  +0x00 : Vector3 m_Point  (x,y,z)
+//  +0x0C : Vector3 m_Normal (x,y,z)   -> normal.y est à +0x10
+//  +0x18 : uint   m_FaceID
+//  +0x1C : Vector2 m_UV
+//  +0x24 : float  m_Distance
+typedef bool (*InternalHitFilter_t)(void *self, void *raycastHit);
+static InternalHitFilter_t orig_InternalHitFilter = nullptr;
+static bool hook_InternalHitFilter(void *self, void *raycastHit) {
+  if ((g_NoClipEnabled || Esp_IsAutoFollowActive()) && raycastHit) {
+    // Lecture safe de normal.y. Si la struct était minuscule et passée par
+    // registre, raycastHit pourrait être nul ou pointer ailleurs ; dans ce
+    // cas on retombe sur l'ancien comportement (traverse tout).
+    float ny = *(float *)((char *)raycastHit + 0x10);
+    // Sol ou pente raisonnable -> on GARDE la collision (perso reste debout).
+    // Sauf si on est en auto-follow (on veut tout traverser pour ne pas être bloqué en vol).
+    if (ny > 0.5f && !Esp_IsAutoFollowActive()) {
+      return orig_InternalHitFilter(self, raycastHit);
+    }
+    // Mur, plafond ou sol (en follow) -> on IGNORE (perso traverse).
+    return false;
+  }
+  return orig_InternalHitFilter(self, raycastHit);
+}
+
+void *hack_thread(void *) {
+  LOGI(DBG ": V140 DEVELOPER start");
+  // *** ÉTAPE 0 — WIPE APP DATA si flag posé au précédent run ***
+  // Doit s'exécuter AVANT que Unity termine de charger PlayerPrefs / Firebase.
+  // En pratique on est dans le thread qui démarre dès JNI_OnLoad ; Unity n'a
+  // pas encore atteint Awake() de la 1ère scène = aucun fichier n'est encore
+  // ouvert. Wipe = sûr.
+  wipeAppDataIfFlagged();
+
+  // *** ÉTAPE 0.5 — VERROU HWID (serveur licence) ***
+  // Si l'appareil n'est pas autorisé : exit(0). Sinon on continue.
+  // Hwid_LicenseCheckOrDie();
+
+  if (!wait_for_lib(targetLibName, 60))
+    return nullptr;
+
+  LOGI(OBFUSCATE("libil2cpp.so loaded, injecting OneState V18 logic..."));
+  sleep(3);
+  LibInfo lib = get_lib_info(targetLibName);
+  if (!lib.valid) {
+    LOGE(DBG ": FAIL base");
+    return nullptr;
+  }
+  uintptr_t B = lib.image_base;
+  g_base = B;
+  LOGI(DBG ": base=0x%lx", B);
+  ESP_SetBaseAddress(B);
+
+  const char *RET = "C0035FD6";
+  const char *RET0 = "00008052C0035FD6"; // MOV W0,#0; RET
+  const char *RET1 = "20008052C0035FD6"; // MOV W0,#1; RET
+  const char *RET2 = "40008052C0035FD6"; // MOV W0,#2; RET
+  const char *RET6 = "C0008052C0035FD6"; // MOV W0,#6; RET (AdminLevel4)
+
+  // --- GOD MODE ---
+  patch_HealthSync = MemoryPatch::createWithHex(B + 0x2792BD0, RET);
+  patch_Knockout1 = MemoryPatch::createWithHex(B + 0x3005994, RET);
+  patch_Knockout2 = MemoryPatch::createWithHex(B + 0x3022B28, RET);
+  // V162 AUDIT REMOVED: 0x2206694 = Animancer.Examples.GameKit.FlinchState.OnDamageReceived (sample code Animancer, jamais executé). Le vrai OnDamageReceived du jeu reste à identifier.
+  // patch_Damage = MemoryPatch::createWithHex(B + 0x22C903C, RET);
+  patch_KoState = MemoryPatch::createWithHex(B + 0x319AB2C, RET0);
+  patch_NotKo = MemoryPatch::createWithHex(B + 0x319C53C, RET1);
+  patch_IsAlive1 = MemoryPatch::createWithHex(B + 0x39714C8, RET1);
+  // V162 AUDIT REMOVED: 0x38BC220 = System.WeakReference.get_IsAlive (DANGEREUX : force GC à reporter tous les objets comme vivants → fuites mémoire). IsAlive du player reste couvert par patch_IsAlive1.
+  // patch_IsAlive2 = MemoryPatch::createWithHex(B + 0x2D648B4, RET1);
+  patch_IsAlive3 = MemoryPatch::createWithHex(B + 0x2903B78, RET1);
+  patch_DeadSync = MemoryPatch::createWithHex(B + 0x2782CD4, RET);
+  patch_ProcessDead = MemoryPatch::createWithHex(B + 0x277CF8C, RET);
+  patch_DeathUI1 = MemoryPatch::createWithHex(B + 0x2546624, RET);
+  patch_DeathUI2 = MemoryPatch::createWithHex(B + 0x2567A50, RET);
+  patch_DeathUI3 = MemoryPatch::createWithHex(B + 0x25480C8, RET);
+  // V154 — God Mode v2 (anim KO + état unconscious + cleanup melee)
+  patch_UnconsciousDetect    = MemoryPatch::createWithHex(B + 0x3005898, RET);
+  patch_MeleeKnockoutCleanup = MemoryPatch::createWithHex(B + 0x31A04BC, RET);
+  patch_DeadKnockoutRestore  = MemoryPatch::createWithHex(B + 0x3001824, RET);
+  // patch_PedKill et patch_GhostBullet (=WeaponAttackReceive) sont créés plus bas
+  // dans la section GHOST MODE et déjà togglés dans case 13.
+
+  // --- STAMINA ---
+  patch_StaminaLose = MemoryPatch::createWithHex(B + 0x300D7B4, RET);
+  patch_StaminaRestore = MemoryPatch::createWithHex(B + 0x300D890, RET);
+  // patch_CanSprint = MemoryPatch::createWithHex(B + 0x2ECBC88, RET);
+  patch_UseStamina = MemoryPatch::createWithHex(B + 0x30963E8, RET);
+  patch_ConsumeStamina = MemoryPatch::createWithHex(B + 0x300DA08, RET);
+  patch_HasStamina = MemoryPatch::createWithHex(B + 0x300D6E4, RET1);
+
+  // --- SANTE RESEAU ---
+  patch_MaxHealthBonus = MemoryPatch::createWithHex(B + 0x293A85C, RET);
+  patch_FastRegen = MemoryPatch::createWithHex(B + 0x293BCA0, RET);
+
+  // --- ACCES ADMIN ---
+  patch_GetLevel = MemoryPatch::createWithHex(B + 0x2A75614, RET6);
+  patch_HasLevel = MemoryPatch::createWithHex(B + 0x2A756A0, RET1);
+  patch_HasRights = MemoryPatch::createWithHex(B + 0x2DBE564, RET1);
+  patch_HasRights2 = MemoryPatch::createWithHex(B + 0x2DBE6A8, RET1);
+  patch_SyncBlock = MemoryPatch::createWithHex(B + 0x2A74C90, RET);
+  patch_InitBlock = MemoryPatch::createWithHex(B + 0x2A7480C, RET);
+  patch_StateBlock = MemoryPatch::createWithHex(B + 0x2A74ADC, RET);
+  patch_UpdateBlock = MemoryPatch::createWithHex(B + 0x2A75294, RET);
+  patch_ToggleBlock = MemoryPatch::createWithHex(B + 0x2A74F84, RET);
+  patch_SocRights1 = MemoryPatch::createWithHex(B + 0x2DBE564, RET1);
+  patch_SocRights2 = MemoryPatch::createWithHex(B + 0x2DBE1C0, RET1);
+  patch_SocRights3 = MemoryPatch::createWithHex(B + 0x2DBE6A8, RET1);
+
+  // --- ADMIN DIPLOMA ---
+  patch_DiplomaPanel = MemoryPatch::createWithHex(B + 0x27F98EC, RET);
+  patch_DiplomaCheck = MemoryPatch::createWithHex(B + 0x27F7400, RET);
+  patch_DiplomaPenalty = MemoryPatch::createWithHex(B + 0x27FA8E8, RET);
+  patch_DiplomaPardon = MemoryPatch::createWithHex(B + 0x27FA114, RET);
+  patch_DiplomaClear = MemoryPatch::createWithHex(B + 0x27F7CC0, RET);
+  patch_DiplomaHistory = MemoryPatch::createWithHex(B + 0x27F8CB0, RET);
+  patch_DiplomaSync1 = MemoryPatch::createWithHex(B + 0x27F84A4, RET);
+  patch_DiplomaSync2 = MemoryPatch::createWithHex(B + 0x27F877C, RET);
+
+
+  // --- ADMIN PANELS ---
+  patch_RateAdmin = MemoryPatch::createWithHex(B + 0x2F3C814, RET);
+  patch_FactionSurvey = MemoryPatch::createWithHex(B + 0x2A6B840, RET);
+
+  // --- ADMIN CHAT ---
+  patch_AdminChatCreate = MemoryPatch::createWithHex(B + 0x2A6EA58, RET);
+  patch_AdminChatInitUi = MemoryPatch::createWithHex(B + 0x2A6F054, RET);
+  patch_AdminChatAddMsg = MemoryPatch::createWithHex(B + 0x2A6E65C, RET);
+  patch_AdminChatAddSync = MemoryPatch::createWithHex(B + 0x2A6E360, RET);
+  patch_AdminChatSendSync = MemoryPatch::createWithHex(B + 0x2A6F834, RET);
+  patch_AdminChatToggle = MemoryPatch::createWithHex(B + 0x2975640, RET);
+  patch_AdminChatCloseSync = MemoryPatch::createWithHex(B + 0x2A6F4A0, RET);
+  patch_AdminChatCreateSync = MemoryPatch::createWithHex(B + 0x2A6F650, RET);
+
+  // --- ADMIN DIPLOMA SYSTEMS ---
+  patch_DiplomaPageResult = MemoryPatch::createWithHex(B + 0x27F84A4, RET);
+  patch_DiplomaCreateSys = MemoryPatch::createWithHex(B + 0x27F98EC, RET);
+  patch_DiplomaInitUiSys = MemoryPatch::createWithHex(B + 0x27F79F4, RET);
+  patch_DiplomaPardonCreate = MemoryPatch::createWithHex(B + 0x27FA114, RET);
+  patch_DiplomaPardonInit = MemoryPatch::createWithHex(B + 0x27FA698, RET);
+  patch_DiplomaPenaltyCreate = MemoryPatch::createWithHex(B + 0x27FA8E8, RET);
+  patch_DiplomaPenaltyInit = MemoryPatch::createWithHex(B + 0x27FAE6C, RET);
+  patch_DiplomaResponseSync = MemoryPatch::createWithHex(B + 0x27F877C, RET);
+
+  // --- RATE ADMIN SYSTEMS ---
+  patch_RateAdminCreate = MemoryPatch::createWithHex(B + 0x2F3C814, RET);
+  patch_RateAdminInitUi = MemoryPatch::createWithHex(B + 0x2F3CF6C, RET);
+  patch_RateAdminSend = MemoryPatch::createWithHex(B + 0x2DD69E0, RET);
+  patch_RateAdminReason = MemoryPatch::createWithHex(B + 0x2F3C6A4, RET);
+  patch_RateAdminStars = MemoryPatch::createWithHex(B + 0x2F3C6A4, RET);
+
+  // --- CHAT ACTIONS PANEL ---
+  patch_ChatActionsCreate = MemoryPatch::createWithHex(B + 0x28DE2C8, RET);
+  patch_ChatActionsInit = MemoryPatch::createWithHex(B + 0x28DE690, RET);
+
+  // V162 AUDIT REMOVED: les 5 offsets FactionSurvey* sont en réalité des aliases
+  // erronés vers RateAdmin* (copy-paste). FactionSurvey n'est donc PAS
+  // réellement bloqué par ces patches.
+  // patch_FactionSurveyCreate = MemoryPatch::createWithHex(B + 0x2A6B840, RET);
+  // patch_FactionSurveyInitUi = MemoryPatch::createWithHex(B + 0x2A6C298, RET);
+  // patch_FactionSurveyInfoClick = MemoryPatch::createWithHex(B + 0x2A6BB24, RET);
+  // patch_FactionSurveyCleanup = MemoryPatch::createWithHex(B + 0x2DD69E0, RET);
+  // patch_FactionSurveyResponse = MemoryPatch::createWithHex(B + 0x2DD6D94, RET);
+
+  // --- ADMIN PROTECTION ---
+  patch_RemoveRightsH = MemoryPatch::createWithHex(B + 0x2AA4430, RET);
+  patch_ChangeAccessH = MemoryPatch::createWithHex(B + 0x29A622C, RET);
+  patch_Kick1 = MemoryPatch::createWithHex(B + 0x2A69D68, RET);
+  patch_Kick2 = MemoryPatch::createWithHex(B + 0x26CC6C0, RET);
+  patch_Kick3 = MemoryPatch::createWithHex(B + 0x29B71E8, RET);
+  patch_Ban1 = MemoryPatch::createWithHex(B + 0x2AA58C4, RET);
+  patch_Ban2 = MemoryPatch::createWithHex(B + 0x29B60A0, RET);
+  // V162 AUDIT REMOVED: 0x234A960 = VoiceVolumeStorageInitializer.Mute (init mic joueur, pas anti-mute admin)
+  // patch_Mute1 = MemoryPatch::createWithHex(B + 0x234A960, RET);
+  // V162 AUDIT REMOVED: Log.Warning + UnityLoggingSink.Warning + CrashlyticsLoggingSink.Warning (loggers, pas warns admin)
+  // patch_Warn1 = MemoryPatch::createWithHex(B + 0x3103C60, RET);
+  // patch_Warn2 = MemoryPatch::createWithHex(B + 0x31046F0, RET);
+  // patch_Warn3 = MemoryPatch::createWithHex(B + 0x2916F90, RET);
+
+  // --- ADMIN TELEPORT ---
+  patch_Teleport1 = MemoryPatch::createWithHex(B + 0x2661E44, RET);
+  patch_Teleport2 = MemoryPatch::createWithHex(B + 0x29ACB7C, RET);
+  patch_Teleport3 = MemoryPatch::createWithHex(B + 0x29B3E78, RET);
+  patch_Teleport4 = MemoryPatch::createWithHex(B + 0x2B7D338, RET);
+  patch_Teleport5 = MemoryPatch::createWithHex(B + 0x27327B4, RET);
+  patch_Teleport6 = MemoryPatch::createWithHex(B + 0x29B3EF0, RET);
+  patch_Teleport7 = MemoryPatch::createWithHex(B + 0x2F8AACC, RET);
+
+  // --- ANTI-KNOCKOUT ---
+  patch_UnconsciousKO = MemoryPatch::createWithHex(B + 0x3005994, RET);
+  patch_MeleeKOForce = MemoryPatch::createWithHex(B + 0x3022B28, RET);
+  patch_RagDollState = MemoryPatch::createWithHex(B + 0x3023060, RET);
+  patch_KnockoutSync = MemoryPatch::createWithHex(B + 0x3007C40, RET);
+
+  // --- GHOST MODE (bloque reception balles et punches) ---
+  patch_GhostBullet = MemoryPatch::createWithHex(B + 0x2BD3074, RET);
+  patch_GhostMelee = MemoryPatch::createWithHex(B + 0x2BD22D0, RET);
+  patch_PedKill = MemoryPatch::createWithHex(B + 0x277BAA4, RET);
+  patch_PedRevive = MemoryPatch::createWithHex(B + 0x277DACC, RET);
+
+
+  // --- ANTI-DEATH UI ---
+  patch_HudDeathCreate = MemoryPatch::createWithHex(B + 0x23F98DC, RET);
+  // V162 AUDIT REMOVED: 0x23FBAFC = HudDeathInitializeOtherSystem.<OnUpdate>b__15_2 (lambda anonyme, pas l'OnUpdate principal). HudDeathInitializeOtherSystem.OnUpdate déjà couvert par patch_DeathUI3.
+  // patch_HudDeathInit = MemoryPatch::createWithHex(B + 0x23FBAFC, RET);
+  patch_HudDeathWatch = MemoryPatch::createWithHex(B + 0x23F98AC, RET);
+
+  // --- ADMIN CROWN ---
+  patch_AdminIcon = MemoryPatch::createWithHex(B + 0x2973F40, RET1);
+  patch_AccessLevel = MemoryPatch::createWithHex(B + 0x2A75614, RET6);
+
+  // --- COMBAT AUGMENTÉ ---
+  // WeaponParametersService.GetAverageDamage → retourne 999999 dégâts
+  patch_WeaponDamage = MemoryPatch::createWithHex(B + 0x2430C60, "E0238452E0018072C0035FD6");
+  // V162 AUDIT REMOVED: 0x275450C = WeaponLevelParameters.WeaponLevelParameters (constructeur). Patcher un ctor avec un return float = comportement aléatoire.
+  // patch_HeadshotMult = MemoryPatch::createWithHex(B + 0x275450C, "4000001DC0035FD60000404000000000");
+
+  // --- ANTI-ARREST ---
+  patch_Handcuff1 = MemoryPatch::createWithHex(B + 0x2782968, RET);
+  patch_Handcuff2 = MemoryPatch::createWithHex(B + 0x2782C70, RET0);
+  patch_Jail1 = MemoryPatch::createWithHex(B + 0x2AAAEF8, RET);
+  patch_JailTimer = MemoryPatch::createWithHex(B + 0x23E3D18, RET); // HudJailTimerCheckFirstSystem.OnUpdate → RET = pas de prison
+
+  // --- REPUTATION ---
+  // V162 AUDIT REMOVED: 0x29FBC64 = GuiDonateShopPurchaseVehicleComponent.SetReputation (label UI dans la boutique de dons, pas un système de réputation global).
+  // patch_LockRep = MemoryPatch::createWithHex(B + 0x29FBC64, RET);
+
+  // --- MOUVEMENT ---
+  // LDR S0,[PC,#8]; RET; .float 5.0; .float 0.0
+  patch_SuperSpeed = MemoryPatch::createWithHex(B + 0x22AB71C, "4000001DC0035FD60000A04000000000");
+  // V162 AUDIT REMOVED: 0x2204B74 = Animancer.Examples.GameKit.CharacterMovement.get_Gravity (sample code Animancer, ne tourne PAS dans le jeu réel). Le vrai SuperJump utilise déjà le hook hook_SetVelocity (Fly Hack pattern).
+  // patch_SuperJump = MemoryPatch::createWithHex(B + 0x22C751C, "4000001DC0035FD6000000BF00000000");
+  // patch_LowGravity = MemoryPatch::createWithHex(B + 0x22C751C, "4000001DC0035FD6CDCCCC3D00000000");
+
+  // --- COMBAT ---
+  // OnePunch = même fonction que WeaponDamage (GetAverageDamage)
+  patch_OnePunch = MemoryPatch::createWithHex(B + 0x2430C60, "E0238452E0018072C0035FD6");
+
+  // --- AIMBOT ---
+  patch_NoRecoil = MemoryPatch::createWithHex(B + 0x30136A0, RET);
+  // LDR S0,[PC,#8]; RET; .float 0.001; .float 0.0 → ultra fast fire rate
+  patch_RapidFire = MemoryPatch::createWithHex(B + 0x23714D0, "4000001DC0035FD66F12833A00000000");
+  patch_InfAmmo = MemoryPatch::createWithHex(B + 0x2BD1C8C, RET);
+  // WeaponAttackEndSystem.OnUpdate @ 0x2ACCA14 — c'est CE système qui, à la
+  // fin d'une attaque, crée le component WeaponAmmoDecrease consommé ensuite
+  // par WeaponAmmoDecreaseSystem. Bloquer ICI = pas de décrément du tout.
+  patch_AttackEnd = MemoryPatch::createWithHex(B + 0x2BD1EB0, RET);
+  // Infinite ammo INVENTAIRE: bloque la suppression de munitions globales
+  // dev.Scripts.ECS...PedWeaponAmmoRemoveSystem.OnUpdate @ 0x2FF9BA8 (V18)
+  patch_InfAmmoInv = MemoryPatch::createWithHex(B + 0x2FF9BA8, RET);
+  patch_InfAmmoSync = MemoryPatch::createWithHex(B + 0x2FFB7B8, RET);
+  // CORRECTION OFFSET : 0x2EA4850 était CallUpdate (wrapper). Vrai PedWeaponAmmoSyncSystem.OnUpdate @ 0x2EA4EC4 — bloque l'écrasement ammo serveur→client
+  patch_InfAmmoSync2 = MemoryPatch::createWithHex(B + 0x2FF9CAC, RET);
+  // CORRECTION OFFSET : 0x2EA6B48 était CallUpdate. Vrai PedWeaponGiveAmmoSyncSystem.OnUpdate (cherchons un offset propre — laissé en wrapper si pas trouvé)
+  patch_InfAmmoSync3 = MemoryPatch::createWithHex(B + 0x2FFB514, RET);
+  patch_NoReload = MemoryPatch::createWithHex(B + 0x2BD8B68, RET);
+
+  // --- ANTI FALL ANIMATION ---
+  // Hex "00008052C0035FD6" = MOV W0, #0 ; RET (return false en ARM64).
+  // Bloque tout entrée du state machine dans les Fall states → pas d'anim
+  // de chute, le perso continue son state actuel (running/walking).
+  patch_FallStateCanEnter      = MemoryPatch::createWithHex(B + 0x30A3D38, "00008052C0035FD6");
+  patch_FallStateMeleeCanEnter = MemoryPatch::createWithHex(B + 0x3070634, "00008052C0035FD6");
+  patch_FallStateRangeCanEnter = MemoryPatch::createWithHex(B + 0x30750C0, "00008052C0035FD6");
+
+  // --- VEHICULE ---
+  // V162 AUDIT REMOVED: 0x2204B4C = Animancer.Examples.GameKit.CharacterMovement.get_MaxSpeed (sample code Animancer, et c'est un perso pas un véhicule). VehicleNitro/SuperSpeed ne marchait JAMAIS via ce patch.
+  // patch_VehicleNitro = MemoryPatch::createWithHex(B + 0x2204B4C, "4000001DC0035FD60000484300000000");
+  // patch_VehicleSuperSpeed = MemoryPatch::createWithHex(B + 0x2204B4C, "4000001DC0035FD60000484300000000");
+  // Vehicle Water : VehicleWaterFixedSystem.OnUpdate @ 0x2C7AD08 (V18)
+  patch_VehicleWater = MemoryPatch::createWithHex(B + 0x2C7AD08, RET);
+
+  // --- FLY / FOV / BULLET / DAMAGE ---
+  // Fly Hack : utilise le mécanisme g_FlyEnabled (déjà branché dans
+  // hook_SetVelocity et hook_SetPlanarVelocity qui clampent vy à >= 0 pour
+  // le local actor uniquement). PAS de patch statique nécessaire.
+
+  // --- CHECKPOINTS VIENNENT AU JOUEUR (Malvado-style) ---
+  // QuestStepGoToCheckpointStart.CheckForPlayerPedAlreadyOnCheckpoint @ 0x2E2F568
+  // RET1 = retourne true → le système considère que le joueur est déjà sur
+  // le checkpoint et appelle ProcessEnterCheckpoint immédiatement.
+  // Résultat : les missions/jobs/events progressent sans bouger.
+  patch_AutoCheckpoint = MemoryPatch::createWithHex(B + 0x2F7E24C, "20008052C0035FD6");
+
+
+  // --- RESEAU ---
+  // V162 AUDIT REMOVED: 0x3D261EC/0x3D27054/0x3D262D8 = System.Net.ServicePoint*.CloseConnectionGroup (stack HTTP .NET). Le jeu utilise IBNet UDP, donc ces patches ne font rien. Le vrai NoNetKick devrait viser un IBNet KickDatagram.Read.
+  // patch_NoNetKick = MemoryPatch::createWithHex(B + 0x3D261EC, RET1);
+  // patch_NoNetKick2 = MemoryPatch::createWithHex(B + 0x3D27054, RET1);
+  // patch_NoNetKick3 = MemoryPatch::createWithHex(B + 0x3D262D8, RET1);
+
+  // --- MONDE ---
+  // get_Hour @ 0x384168C : retourne l'heure courante du jeu (0..23). On force
+  // la valeur 12 (midi) pour avoir une lumière de jour PERMANENTE.
+  // Encoding ARM64 : MOV W0, #12 ; RET
+  //   MOV W0, #12 = 0x528001 80 (52|80|01|80 little-endian = 80 01 80 52)
+  //   RET         = 0xD65F03C0 (LE = C0 03 5F D6)
+  // V162 AUDIT REMOVED: 0x384168C = System.DateTime.get_Hour (horloge .NET globale). Forcer à 12 partout dans le jeu = bugs aléatoires (timers, animations time-of-day, network timestamps). Le vrai cycle jour/nuit est dans EnviroFeature.
+  // patch_DayMode = MemoryPatch::createWithHex(B + 0x384168C, "80018052C0035FD6");
+
+  // --- TUTORIEL SKIP ---
+  patch_SoftTutorial = MemoryPatch::createWithHex(B + 0x259B3E0, RET);
+  patch_HardTutorial = MemoryPatch::createWithHex(B + 0x2F77C50, RET);
+
+  // --- GREEN ZONE BYPASS ---
+  patch_AttackNotAllowed = MemoryPatch::createWithHex(B + 0x2BD2D84, RET);
+  // Renforce : bloque aussi la lecture du datagram serveur qui sync l'état
+  // "attack not allowed" (sans ce patch, le sync system reste passif mais
+  // le datagram peut quand même écrire dans le component à la 1ère réception).
+  patch_AttackNotAllowedRead = MemoryPatch::createWithHex(B + 0x2BE00C0, RET);
+
+  // --- CINEMATIQUES / CUTSCENES ---
+  // StartCuteSceneSystem.OnUpdate @ 0x27158D0 : démarre toutes les cinématiques.
+  // RET = aucune cinématique ne se lance (skip immédiat).
+  patch_SkipCutscene = MemoryPatch::createWithHex(B + 0x2850498, RET);
+  // FirstTimeInJailStartSyncSystem.OnUpdate @ 0x2945498 : cinématique de
+  // première arrestation. Sans ce patch, à chaque arrestation = cinématique.
+  patch_SkipFirstJail = MemoryPatch::createWithHex(B + 0x2A43B24, RET);
+
+
+  // --- VEHICLE COLLISION BOOST (x2 force) ---
+  // Patches VehicleImpactForceCalculator.GetImpactForce → returns x2
+  // NB: ce patch ne semble pas avoir d'effet visible en jeu (la fonction est
+  // probablement le calcul que CLIENT n'utilise pas pour appliquer l'impulse
+  // — l'impulse vient de Unity Rigidbody natif, pas de cette fn). On le garde
+  // pour l'instant mais c'est probablement un dead-code patch.
+  // V162 AUDIT REMOVED: 0x2EB8E70 absent de Assembly-CSharp ET de dump.cs (offset DEAD). Le commentaire ligne 1217-1220 le confessait déjà comme dead-code.
+  // patch_CarCollision = MemoryPatch::createWithHex(B + 0x2EB8E70, "4000001DC0035FD60000004000000000");
+
+  // --- VOITURE INDESTRUCTIBLE ---
+  // VehicleDamageSystem.OnUpdate @ 0x2B6C08C : RET => le système qui applique
+  // les dégâts à la voiture côté client est neutralisé. Pas de fumée, pas de
+  // moteur cassé visuellement.
+  patch_VehicleNoDamage = MemoryPatch::createWithHex(B + 0x2C66FC0, RET);
+
+  // --- VEHICLE RAMMING + ANTI-ÉLASTIQUE ---
+  // VehicleElementExtrapolateSystem.OnUpdate @ 0x279ADE8 (V18)
+  patch_VehicleNoExtrapolate = MemoryPatch::createWithHex(B + 0x279ADE8, RET);
+
+  // --- NOCLIP - DOBBY HOOKS ---
+  // fn_GetRigidbodyComponent = (GetRigidbodyComponent_t)(B + 0x31BCA18);
+  // fn_SetIsKinematic        = (SetIsKinematic_t)(B + 0x31B7BBC);
+  /* int rc1 = DobbyHook((void *)(B + 0x31BF874),
+                      (dobby_dummy_func_t)hook_PreSimulationUpdate,
+                      (dobby_dummy_func_t *)&orig_PreSimulationUpdate); */
+  /* int rc2 = DobbyHook((void *)(B + 0x31AD9BC),
+                      (dobby_dummy_func_t)hook_InternalHitFilter,
+                      (dobby_dummy_func_t *)&orig_InternalHitFilter); */
+  // --- SUPER SPEED PED HOOKS ---
+  // 2 hooks complémentaires : set_Velocity (point final composite) +
+  // set_PlanarVelocity (chemin Lightbug Unstable). Le toggle bascule g_SuperSpeedEnabled.
+  /* int rc3 = DobbyHook((void *)(B + 0x31CA8F4),
+                      (dobby_dummy_func_t)hook_SetVelocity,
+                      (dobby_dummy_func_t *)&orig_SetVelocity); */
+  /* int rc4 = DobbyHook((void *)(B + 0x31CA99C),
+                      (dobby_dummy_func_t)hook_SetPlanarVelocity,
+                      (dobby_dummy_func_t *)&orig_SetPlanarVelocity); */
+  // LOGI(DBG ": NoClip hooks: preSim=%d hitFilter=%d setVel=%d setPlanarVel=%d", rc1, rc2, rc3, rc4);
+
+  // --- HOOK Camera.set_fieldOfView @ 0x42AA700 ---
+  /* int rcFov = DobbyHook((void*)(B + 0x42AA700),
+                        (dobby_dummy_func_t)hook_SetFieldOfView,
+                        (dobby_dummy_func_t*)&orig_SetFieldOfView); */
+  // LOGI(DBG ": Camera FOV hook rc=%d", rcFov);
+
+  // --- HOOK Transform.set_localScale_Injected @ 0x43070B4 ---
+  // V162.1 DISABLED : hook appelé 1000+ fois/frame pour TOUS les Transforms
+  // du jeu (UI, env, peds, véhicules…). Risque énorme de SIGSEGV si
+  // s_localActor pointe vers un actor freed entre 2 frames. Remplacé par
+  // un appel DIRECT à Transform.set_localScale_Injected sur le local
+  // uniquement, déclenché à chaque changement de slider 190 / preset 231-235.
+  // Résultat : 1 appel par changement vs 1000+/frame.
+  // int rcScale = DobbyHook((void*)(B + 0x43070B4),
+  //                         (dobby_dummy_func_t)hook_SetLocalScaleInjected,
+  //                         (dobby_dummy_func_t*)&orig_SetLocalScaleInjected);
+  // LOGI(DBG ": Transform Scale hook rc=%d", rcScale);
+
+  // --- HOOK CreateMapCheckpointSignalHandler @ 0x251E0F0 ---
+  // V162.1 DISABLED : hook MapCheckpointHandler @ 0x251E0F0 provoquait
+  // des CRASHs à l'ouverture de la mini-map. La méthode est un stub vide
+  // IL2CPP (RVA File Offset 0x2053 = empty body), l'ABI Morpeh n'est pas
+  // celle qu'on suppose, ou Dobby ne peut pas patcher proprement un body
+  // si court. → désactivé. Le TP Marqueur a été entièrement ré-architecturé
+  // sur les Slots Favoris (160-179) et les TPLoc stratégiques (300-600).
+  {
+    int rcCp = DobbyHook((void*)(g_base + 0x282A168),
+                         (dobby_dummy_func_t)hook_CreateMapGpsCheckpoint_ctor,
+                         (dobby_dummy_func_t*)&orig_CreateMapGpsCheckpoint_ctor);
+    LOGI(DBG ": MapCheckpoint ctor hook rc=%d", rcCp);
+  }
+
+  // --- ESP RENDER-FRAME TICK ---
+  // Hook sur Camera.FireOnPreCull @ 0x41F61AC pour synchroniser ESP avec le
+  // RENDU Unity (60Hz au lieu du FixedUpdate 50Hz). Avantages :
+  //  - Box ESP suivent exactement les positions du jeu (plus de saccades)
+  //  - Fonctionne même en voiture (le PreSimulationUpdate local est OFF)
+  // Throttle interne dans Esp_FrameTick limite à 60Hz max pour éviter
+  // l'appel multiple par frame (1 par caméra rendue).
+  /* int rcCam = DobbyHook((void *)(B + 0x41F61AC),
+                        (dobby_dummy_func_t)hook_FireOnPreCull,
+                        (dobby_dummy_func_t *)&orig_FireOnPreCull); */
+  // LOGI(DBG ": ESP render-frame hook (FireOnPreCull)=%d", rcCam);
+
+  // --- ESP TICK GLOBAL V18 ---
+  // Hook sur HudMapPlayerWorldPositionSyncSystem.OnUpdate (0x2517A18)
+  // Tick à 60Hz, fonctionne en voiture.
+  int rcEsp = DobbyHook((void *)(B + 0x2517A18),
+                        (dobby_dummy_func_t)hook_HudMapTick,
+                        (dobby_dummy_func_t *)&orig_HudMapTick);
+  LOGI(DBG ": ESP global tick hook (HudMapPlayerWorldPositionSync)=%d", rcEsp);
+  // Les patches statiques patch_NoCollider* ne sont plus utilises (case 109 utilise g_NoClipEnabled).
+  // Variables laissees declarees pour eviter d'autres modifications mais non initialisees.
+
+
+  // --- ANTI-CHEAT (toujours actif) ---
+  // ATTENTION : patch_AC = 0x20490B8 est UN TRAMPOLINE IL2CPP PARTAGÉ par
+  // 1678 fonctions différentes (vérifié via dump). Le patcher casse une
+  // myriade de fonctions dans le jeu, dont la chaîne de damage. INVALIDÉ.
+  // V162 AUDIT REMOVED: 6 patches AC* ciblaient des fonctions sans rapport avec
+  // un anti-cheat :
+  //  - 0x20490B8 = UnityEngine.Purchasing.INativeAppleStore.InterceptPromotionalPurchases (Apple Store, trampoline partagé)
+  //  - 0x363ADCC + 0x36558C8 = DigitalOpus MeshBaker.CheckIntegrity (plugin de batching mesh, pas anti-cheat)
+  //  - 0x36ED3C0 + 0x3721580 = Mono.Security.Cryptography.DSAManaged.VerifySignature (crypto runtime Mono, dangereux)
+  //  - 0x3729D64 = à vérifier mais probablement idem
+  // patch_AC = MemoryPatch::createWithHex(B + 0x20490B8, RET1);
+  // patch_AC2 = MemoryPatch::createWithHex(B + 0x363ADCC, RET1);
+  // patch_AC3 = MemoryPatch::createWithHex(B + 0x36558C8, RET1);
+  // patch_AC_Sig1 = MemoryPatch::createWithHex(B + 0x36ED3C0, RET1);
+  // patch_AC_Sig2 = MemoryPatch::createWithHex(B + 0x3721580, RET1);
+  // patch_AC_Hash = MemoryPatch::createWithHex(B + 0x3729D64, RET1);
+
+  // --- ANTI-BAN (bloque spectate et tracking admin) ---
+  // V162 AUDIT REMOVED: patch_AntiBan1 @ 0x2503E58 (cible non identifiée, auto-confessé comme suspect dans les commentaires V151).
+  // patch_AntiBan1 = MemoryPatch::createWithHex(B + 0x2503E58, RET);
+  patch_AntiBan2 = MemoryPatch::createWithHex(B + 0x2662118, RET);  // FreeCamUiTrackPlayerDimension.OnUpdate (V18)
+  // --- DAMAGE DEBUG MINIMAL V151 ---
+  // L'utilisateur rapporte : "j'aimbot sur un ped, je vois l'impact de la
+  // balle (sang/effet local), mais le ped ne meurt pas / aucun HP perdu".
+  // Conclusion : le hit est correctement émis client-side (raycast OK), mais
+  // le serveur ne valide pas le damage. Suspects : un des ~40 patches
+  // auto-appliqués au boot interfère avec la chaîne damage serveur.
+  //
+  // MODE DEBUG : on désactive TOUS les auto-applies non-essentiels au boot.
+  // Sont retirés cette fois :
+  //   - 5 patches AC (signing/hash, peuvent invalider le packet damage)
+  //   - 2 patches AntiBan (bloc dupliqué + bloc anti-spectateur)
+  //   - 30 patches Admin (GetLevel=6, HasRights, SyncBlock, Kick, Ban, etc.)
+  //   - patch_AccessLevel (alias de GetLevel, niveau 6)
+  //   - patch_AdminIcon (RET1 sur fonction de check admin)
+  //
+  // SONT GARDÉS (utiles & probablement non-damage-blocking) :
+  //   - patch_Teleport1-7 (utilisés par Teleport_ToPosition pour bypass server)
+  //   - patch_NoRecoil (visuel local pur)
+  //   - patch_Handcuff1/2 + Jail1/JailTimer (anti-arrest, hors chaîne damage)
+  //   - tous les hooks Dobby (NoClip, ESP, FireOnPreCull, DeviceFaker)
+  //
+  // PROCÉDURE :
+  //   1. Build & test : aimbot sur ped, vérifier si HP descend.
+  //   2a. Si DAMAGE OK → un des patches retirés bloquait (binary search).
+  //   2b. Si DAMAGE TOUJOURS KO → cause ailleurs (hook, Esp_GetBestTargetWorld,
+  //       direction redirect, ou patche dans Esp.cpp/Aimbot.cpp).
+  LOGI(DBG ": V151 DAMAGE DEBUG — AC/AntiBan/Admin auto-apply DÉSACTIVÉS.");
+
+  // --- V153 FINAL : root cause damage = NoClip, PAS AttackNotAllowed ---
+  // On peut donc ré-auto-applier AttackNotAllowed pour le GreenZone bypass.
+  // 0x2ACD8E8 = WeaponAttackNotAllowedSyncSystem.OnUpdate → RET
+  if (patch_AttackNotAllowed.isValid()) {
+    patch_AttackNotAllowed.Modify();
+    LOGI(DBG ": V153 AttackNotAllowed ON (auto, GreenZone bypass).");
+  }
+  // V155 ANNULÉ : WeaponAttackNotAllowed n'est inclus QUE par
+  // WeaponProduceAttackMeleeSystem (vérifié dans Assembly-CSharp). Il ne
+  // bloque PAS les attaques ranged. Patcher AttackNotAllowedDatagram.Read
+  // n'aurait aucun effet sur le bug "1ère balle touche, suivantes ratent".
+  // Voir Aimbot.cpp pour les fixes réels (Seed=0, target freshness, log).
+  // --- TÉLÉPORT ANTI-CHEAT BYPASS : AUTO-APPLIQUÉ (V158) ---
+  // Rétabli car sinon le serveur détecte l'Auto-Follow au bout de 10s et
+  // téléporte le joueur dans l'eau (0,0,0) comme punition pour "vol stationnaire".
+  patch_Teleport1.Modify();
+  patch_Teleport2.Modify();
+  patch_Teleport3.Modify();
+  patch_Teleport4.Modify();
+  patch_Teleport5.Modify();
+  patch_Teleport6.Modify();
+  patch_Teleport7.Modify();
+  LOGI(DBG ": Teleport Anti-Cheat Bypass ON (auto, empêche tp serveur dans l'eau).");
+
+  // --- AMMO AUTO-APPLY (audit) ---
+  // RETIRÉS de l'auto-apply (cassent les munitions) :
+  //  - patch_InfAmmoInv (PedWeaponAmmoRemoveSystem) : retire l'ammo de
+  //    l'inventaire LOCAL en réaction au sync serveur. Bloquer = désync.
+  //  - patch_InfAmmoSync (PedWeaponRemoveAmmoSyncSystem) : sync serveur→client.
+  //    Bloquer = on ignore les updates ammo du serveur → tirs rejetés.
+  //  - patch_InfAmmoSync2 : doublon (CallUpdate de InfAmmoInv).
+  //  - patch_InfAmmoSync3 : RIEN À VOIR (PedWeaponDestroySystem, drop arme).
+  // Auto-applique seulement le NoRecoil (UI locale, sans risque). InfAmmo
+  // doit être activé manuellement via toggle 89 par l'utilisateur.
+  if (patch_NoRecoil.isValid()) {
+    patch_NoRecoil.Modify();
+    LOGI(DBG ": NoRecoil ON (auto)");
+  }
+
+  // --- ZONE VERTE BYPASS : AUTO-APPLY RETIRÉ ---
+  // DIAGNOSTIC (user report "mes balles ne font aucun dégât même sans rien
+  // activer") : les 2 patches ci-dessous sont DANS la même plage d'adresses
+  // que la chaîne d'attaque d'armes (0x2ACxxxx / 0x2ADxxxx), à seulement
+  // quelques centaines d'octets de patch_GhostBullet = WeaponAttackReceive.
+  // Le commentaire du patch admettait déjà que "l'ancien offset 0x2ADAC24
+  // bloquait AUCUN DÉGÂT n'est appliqué", le nouvel offset 0x2ADB278 n'a
+  // jamais été vérifié sur dump : forte probabilité qu'il soit aussi wrong
+  // et qu'il bloque WeaponAttackEmit (= mes hits envoyés au serveur).
+  //
+  // → on NE les applique plus au boot. Toggle 98 reste disponible pour
+  //    l'utilisateur averti qui veut tester la zone verte.
+  LOGI(DBG ": GreenZoneBypass NOT auto-applied (protège la damage chain "
+           "sortante). Active manuellement via toggle 98 si besoin.");
+
+  // --- SUPER SPEED auto-appliqué (UNIQUEMENT via velocity, pas Animator) ---
+  // patch_SuperSpeed (Animator.get_speed → 5.0f) RETIRÉ du démarrage : il
+  // accélérait TOUTES les animations dont celles des armes (tir super rapide
+  // intempestif). On garde uniquement le hook hook_SetPlanarVelocity qui
+  // multiplie la velocity HORIZONTALE du local par g_SpeedMultiplier (slider 143).
+  // Résultat : course plus rapide, mais animations d'armes normales.
+  // Hook reste prêt mais désactivé tant que slider 143 reste à 10 (vitesse
+  // normale). Le case 143 l'active automatiquement dès que l'utilisateur
+  // déplace le curseur hors de la valeur neutre.
+  g_SuperSpeedEnabled = false;
+  LOGI(DBG ": SuperSpeed velocity-hook READY (mult=%.2fx neutre, slider pilote)", g_SpeedMultiplier);
+
+  // --- ADMIN ACCESS SAFE — DÉSACTIVÉ V151 ---
+  // patch_AdminIcon @ 0x2973F40 RET1 : suspect d'être en réalité un check
+  // "IsAdmin(ped)" qui, RET1, marque TOUS les peds comme admin → le serveur
+  // refuse de leur appliquer du damage venant d'un civil.
+  // patch_AccessLevel = patch_GetLevel @ 0x297C08C RET6 : pareil, force le
+  // niveau admin 6 pour toute query → toute attaque vue comme "civil tape
+  // admin" et bloquée par le serveur RP.
+  // Les Teleport sont déjà appliqués plus haut (bloc dédié).
+  LOGI(DBG ": V151 Admin Icon/AccessLevel DÉSACTIVÉS (suspects damage block).");
+
+  // --- VEHICULE auto-apply COMPLÈTEMENT RETIRÉ ---
+  // L'utilisateur a signalé des désynchronisations massives : les joueurs
+  // semblaient entrer dans leur voiture puis foncer dans les murs coté client.
+  // Cause probable : VehicleNoExtrapolate ET VehicleNoDamage interagissent
+  // mal avec la prédiction client/serveur. On laisse les 2 toggles manuels
+  // dans le menu pour l'utilisateur avancé, mais OFF par défaut.
+
+  // --- STAMINA INFINIE : RÉINTÉGRÉE EN ARRIÈRE PLAN (V158) ---
+  patch_StaminaLose.Modify();
+  patch_StaminaRestore.Modify();
+  patch_UseStamina.Modify();
+  patch_ConsumeStamina.Modify();
+  patch_HasStamina.Modify();
+  LOGI(DBG ": Stamina infinie auto-appliquée en arrière-plan.");
+
+  // --- NO RELOAD : AUTO-APPLY (V160) ---
+  if (patch_NoReload.isValid()) {
+    patch_NoReload.Modify();
+    LOGI(DBG ": NoReload ON (auto)");
+  }
+
+  // --- EMANUEL HACKS INITIALIZATION ---
+  patch_NotKo = MemoryPatch::createWithHex(B + 0x319C53C, "20008052C0035FD6"); // IsNotMeleeKnockout -> RET1
+  patch_Knockout1 = MemoryPatch::createWithHex(B + 0x3005994, "C0035FD6");       // SetUnconsciousKnockout -> RET
+  patch_KoState = MemoryPatch::createWithHex(B + 0x319AB2C, "00008052C0035FD6"); // IsMeleeKnockoutState -> RET0
+  patch_OnePunch = MemoryPatch::createWithHex(B + 0x2430C60, "E0FF9F52C0035FD6"); // GetAverageDamage -> MOV W0, 65535; RET
+
+  // NetSniff/IL2CPP-dump retirés du boot (focus = features TP/AutoFarm).
+  // Toggle 254/255 et bouton 252 restent fonctionnels si besoin manuel.
+  // NetSniff_Install();  // hooks installés mais capture OFF par défaut
+
+  // --- ANTI-ARREST auto-appliqué (toggle 42) ---
+  // Le vrai effet est appliqué via la chaîne complète d'anti-arrest qui
+  // bascule de nombreux patches. On rejoue la même config que case 42 mais
+  // sans passer par TOG (qui dépend de b_PatchesReady, pas encore vrai ici).
+  // Listés dans handleAntiArrestStartup() pour clarté.
+  // (Implémenté via flag pour appliquer après b_PatchesReady=true.)
+
+  // --- ANTI-SPECTATEUR — DÉSACTIVÉ V151 ---
+  // patch_AntiBan1 @ 0x2503E58 RET et patch_AntiBan2 @ 0x2B77E10 RET dans la
+  // zone admin/spectate. Sans dump pour vérifier qu'il s'agit vraiment de la
+  // fonction spectate (et pas d'un système qui valide les hits ou syncronise
+  // l'inventaire), on les retire de l'auto-apply le temps du diagnostic damage.
+  LOGI(DBG ": V151 Anti-Spectateur DÉSACTIVÉ (suspect damage block).");
+
+  // --- ANTI-ARREST — DÉSACTIVÉ V152 (diag damage) ---
+  // Offsets Handcuff1 @ 0x2A108E4 (proche zone weapon 0x2ACxxxx) et Handcuff2
+  // @ 0x28C677C : non vérifiés sur dump. En mode diag on retire tout pour
+  // isoler la cause racine du problème damage.
+  LOGI(DBG ": V152 Anti-Arrest auto-apply DÉSACTIVÉ (diag damage).");
+
+  // --- GOD MODE : AUCUN auto-apply ---
+  // Les patches UI mort (DeathUI1/2/3 + HudDeathCreate/Init/Watch) NE SONT PLUS
+  // auto-appliqués au boot car ils empêchent l'écran "Vous êtes mort" et le
+  // bouton respawn de s'afficher quand god mode est OFF (tu meurs et tu es
+  // bloqué). Ces patches sont maintenant appliqués UNIQUEMENT via le toggle
+  // god mode (case 13). Quand god mode est OFF → mort/respawn fonctionnent
+  // normalement.
+  LOGI(DBG ": Death UI patches NOT auto-applied (mort/respawn fonctionnels par défaut)");
+
+  // --- ESP + AIMBOT INIT ---
+  // InstallHooks();
+  LOGI(DBG ": ESP/Aimbot hooks installed (skipped at boot)");
+
+  // --- ESP (nouveau module Esp.cpp) ---
+  // Esp_Init(B);
+  LOGI(DBG ": Esp_Init done (skipped at boot)");
+
+  // --- TELEPORT SLOTS : charge les slots persistés depuis fichier ---
+  Teleport_LoadSlots();
+  LOGI(DBG ": Teleport slots loaded from /sdcard/Download/onestate_slots.txt");
+
+  // --- ANTI FALL ANIMATION : AUTO-APPLY RETIRÉ (BUG DAMAGE) ---
+  //
+  // DIAGNOSTIC V145 : user rapporte "je fais aucun dégât aux ennemis, même
+  // sans rien activer". Root cause confirmée ici :
+  //   patch_FallStateRangeCanEnter @ 0x2F3396C = WeaponRangeFallState.CanEnterState
+  //   patch_FallStateMeleeCanEnter @ 0x2F2F030 = OneHandedMeleeWeaponFallState
+  //   patch_FallStateCanEnter      @ 0x2F4D748 = état chute générique
+  //
+  // Ces 3 méthodes sont des state-machine handlers PARTAGÉS PAR TOUS LES PEDS
+  // (pas seulement le local). En les forçant à retourner false :
+  //   - MON perso ne joue plus l'anim de chute quand il se prend une balle ✓
+  //   - MAIS les peds ennemis ne peuvent PLUS entrer dans le RangeFallState
+  //     non plus → c'est CE STATE qui (probablement) applique les dégâts /
+  //     décrément HP / déclenche la mort → CONCLUSION : zéro damage sortant.
+  //
+  // Solution : on NE patche plus rien au boot. L'anim de chute est un confort
+  // minime ; pouvoir tuer les ennemis est essentiel.
+  LOGI(DBG ": Anti-Fall NOT auto-applied (préservation chaîne damage sortante).");
+
+  // --- AIMBOT V153 FINAL : 2 hooks (RayCast + EmitDatagram.Write) ---
+  // Root cause damage trouvée = NoClip, donc aimbot peut être réinstallé.
+  //   0x2AD5AAC = WeaponStorage.RayCastAttackRanged
+  //   0x2ADA8AC = WeaponAttackEmitDatagram.Write (réécrit Direction dans
+  //               le datagram pour matcher les hits client → serveur valide)
+  // Aimbot_InstallHooks(B);
+
+  // --- DEVICE ID FAKER : hook + GUID initial ---
+  // On installe le hook tout de suite (mais inactif tant que toggle 153 OFF).
+  // Le GUID est généré au boot et persiste tant que l'utilisateur ne clique
+  // pas "Régénérer Device ID" (bouton 154).
+  // regenerateFakeDeviceId();
+  /* int rcDev = DobbyHook((void*)(B + 0x4301B80),
+                        (dobby_dummy_func_t)hook_GetDeviceUniqueIdentifier,
+                        (dobby_dummy_func_t*)&orig_GetDeviceUniqueIdentifier); */
+  /* int rcMdl = DobbyHook((void*)(B + 0x4301C48),
+                        (dobby_dummy_func_t)hook_GetDeviceModel,
+                        (dobby_dummy_func_t*)&orig_GetDeviceModel); */
+  /* int rcNam = DobbyHook((void*)(B + 0x4301BD0),
+                        (dobby_dummy_func_t)hook_GetDeviceName,
+                        (dobby_dummy_func_t*)&orig_GetDeviceName); */
+  // LOGI(DBG ": DeviceFaker hooks rc=[uid:%d model:%d name:%d] (active=%d id=%s)",
+//        rcDev, rcMdl, rcNam, (int)g_DeviceIdFaker, g_FakeDeviceId);
+
+  b_PatchesReady = true;
+
+  // --- Démarrage des threads d'automatisation ---
+  // Threads pour TP 10s ennemi, Farm Money, Auto Work, Vol Armée, Meu Destino.
+  // Chaque thread tourne en boucle et exécute son action quand le flag global
+  // correspondant est activé via le menu.
+  startAutomationThreads();
+
+  LOGI(DBG ": V143 CLEAN - AdminLevel4, GodMode, Armes OK");
+  return nullptr;
+}
+
+extern "C" {
+jobjectArray GetFeatureList(JNIEnv *env, jobject context) {
+  const char *f[] = {
+      // ==========================================================
+      // MENU V153 FINAL — Root cause damage = NoClip (IsKinematic
+      // sur Rigidbody casse les raycast d'arme côté client).
+      // NoClip est gardé MAIS avec avertissement clair : DÉSACTIVAR
+      // avant de tirer. Toutes les autres features sont restaurées.
+      //
+      // AUTO au boot :
+      //  - NoRecoil (CameraShake visuel)
+      //  - patch_AttackNotAllowed (GreenZone bypass sortant)
+      //  - Hooks Aimbot (RayCast + EmitDatagram.Write, gated par flag)
+      //  - Hooks NoClip / SuperSpeed / ESP / DeviceFaker (gated par flags)
+      // ==========================================================
+
+      // ==========================================================
+      // V162.2 — MENU ÉPURÉ (uniquement features 100% fonctionnelles)
+      // Toutes les autres features ont été retirées soit parce qu'elles
+      // étaient factices (flags jamais lus / patches jamais initialisés),
+      // soit parce qu'elles dépendaient de hooks instables qui causaient
+      // des crashs (Player Scale hook, MapCheckpointHandler hook).
+      // ==========================================================
+
+      // ======= DEFENSE =======
+      OBFUSCATE("Category_⚙ SYSTEME"),
+      OBFUSCATE("1_Toggle_Activer les Hooks (A FAIRE EN PREMIER)"),
+
+      // ======= TUNING CLUB ONLINE (TCO) =======
+      OBFUSCATE("Category_🔥 TCO CHEATS"),
+      OBFUSCATE("300_Toggle_Initialiser TCO Hacks"),
+      OBFUSCATE("301_InputText_Pseudo de la Cible (Pour Pièges/Mute)"),
+      OBFUSCATE("302_Button_❄️ Geler la Cible (Freeze)"),
+      OBFUSCATE("303_Button_💣 Bombarder la Cible"),
+      OBFUSCATE("304_Button_👑 Faire tomber sa Couronne"),
+      OBFUSCATE("305_Button_👊 Frapper la Cible"),
+      OBFUSCATE("306_Toggle_🛡 Champ de Force (Repousse les autres)"),
+      OBFUSCATE("307_SeekBar_📏 Rayon du Champ de Force_10_200"),
+      OBFUSCATE("308_Toggle_✈️ Fly Mode"),
+      OBFUSCATE("309_SeekBar_✈️ Puissance Fly_0_50"),
+      OBFUSCATE("310_SeekBar_🌍 Gravité (10 = normal)_0_50"),
+      OBFUSCATE("311_Toggle_🚫 Désactiver Collisions Room"),
+      OBFUSCATE("312_Toggle_🤡 April Fools (Tout débloquer)"),
+      OBFUSCATE("313_Toggle_👑 Force MasterClient (Kick Mode)"),
+      OBFUSCATE("314_Toggle_💰 Max Economy (Bypass EP Limit)"),
+
+      OBFUSCATE("Category_🛡 DEFENSE"),
+      OBFUSCATE("13_Toggle_God Mode [invincible : bloque KO / mort / inconscient]"),
+
+      // ======= ESP / AIMBOT =======
+      OBFUSCATE("Category_👁 ESP / AIMBOT"),
+      OBFUSCATE("120_Toggle_ESP + Aimbot [vise automatiquement les joueurs]"),
+      OBFUSCATE("132_Toggle_Wall-Bang [tire à travers les murs]"),
+      OBFUSCATE("152_Toggle_Dot Mode [point au centre au lieu des boîtes]"),
+      OBFUSCATE("194_Toggle_ESP Ligne"),
+      OBFUSCATE("195_Toggle_ESP Box"),
+      OBFUSCATE("196_Toggle_ESP Distance"),
+      OBFUSCATE("197_Toggle_ESP Marqueur"),
+      OBFUSCATE("198_Toggle_ESP Couleur Dynamique"),
+
+      // ======= ARMES =======
+      OBFUSCATE("Category_🔫 ARMES"),
+      OBFUSCATE("205_Toggle_Pas de Rechargement"),
+      OBFUSCATE("206_Toggle_🎯 Aim Bot Tête"),
+      OBFUSCATE("207_Toggle_🎯 Aim Bot Torse"),
+      OBFUSCATE("208_Toggle_🎯 Silent Aim Tête"),
+      OBFUSCATE("209_Toggle_🎯 Silent Aim Torse"),
+      OBFUSCATE("210_SeekBar_🎯 Aim FOV (degrés)_30_180"),
+      OBFUSCATE("211_Toggle_🎯 Aim Visible Only"),
+      OBFUSCATE("212_Toggle_🎯 Visibility Check Outline"),
+      OBFUSCATE("213_Toggle_🎯 Visibility Check Shading"),
+
+      // ======= VISION =======
+      OBFUSCATE("Category_🎥 VISION"),
+      OBFUSCATE("193_SeekBar_Caméra FOV 60 → 140_60_140"),
+      OBFUSCATE("214_Button_FOV 80"),
+      OBFUSCATE("215_Button_FOV 100"),
+      OBFUSCATE("216_Button_FOV 120"),
+      OBFUSCATE("217_Button_FOV 140"),
+
+      // ======= MOUVEMENT =======
+      // V162.2 RETIRÉ : 191 Fly Hack (ne fonctionne pas correctement).
+      OBFUSCATE("Category_⚡ MOUVEMENT"),
+      OBFUSCATE("143_SeekBar_Vitesse 1.0x → 3.0x (valeur/10)_10_30"),
+      OBFUSCATE("109_Toggle_⚠ NoClip [traverse les murs]"),
+
+      // ======= TÉLÉPORT — Mes Lieux Favoris =======
+      // 10 emplacements favoris sauvegardés automatiquement sur le téléphone :
+      // tu peux quitter le jeu / rebooter, ils restent là.
+      // V162.2 RETIRÉ : catégories HÔPITAUX, COMMISSARIATS, BANQUES, GANGS,
+      // MÉTIERS, SHOPS, TAGS — coords hardcodées non vérifiées pour OneState.
+      OBFUSCATE("Category_📍 TÉLÉPORT — Mes Lieux Favoris"),
+      OBFUSCATE("180_Button_🪝 S'accrocher à la cible (1 fois)"),
+      OBFUSCATE("181_Toggle_🛸 Auto-Suivre la cible (vol stationnaire)"),
+      OBFUSCATE("218_Button_⚡ TP Joueur sur la Cible"),
+      OBFUSCATE("219_Button_🚗 TP Voiture sur la Cible"),
+      OBFUSCATE("227_Button_📍 TP Marqueur Joueur"),
+      OBFUSCATE("228_Button_🚗 TP Marqueur Voiture"),
+      OBFUSCATE("160_Button_📌 Mémoriser lieu actuel → Favori 1"),
+      OBFUSCATE("170_Button_✈️ Me téléporter au Favori 1"),
+      OBFUSCATE("161_Button_📌 Mémoriser lieu actuel → Favori 2"),
+      OBFUSCATE("171_Button_✈️ Me téléporter au Favori 2"),
+      OBFUSCATE("162_Button_📌 Mémoriser lieu actuel → Favori 3"),
+      OBFUSCATE("172_Button_✈️ Me téléporter au Favori 3"),
+      OBFUSCATE("163_Button_📌 Mémoriser lieu actuel → Favori 4"),
+      OBFUSCATE("173_Button_✈️ Me téléporter au Favori 4"),
+      OBFUSCATE("164_Button_📌 Mémoriser lieu actuel → Favori 5"),
+      OBFUSCATE("174_Button_✈️ Me téléporter au Favori 5"),
+      OBFUSCATE("165_Button_📌 Mémoriser lieu actuel → Favori 6"),
+      OBFUSCATE("175_Button_✈️ Me téléporter au Favori 6"),
+      OBFUSCATE("166_Button_📌 Mémoriser lieu actuel → Favori 7"),
+      OBFUSCATE("176_Button_✈️ Me téléporter au Favori 7"),
+      OBFUSCATE("167_Button_📌 Mémoriser lieu actuel → Favori 8"),
+      OBFUSCATE("177_Button_✈️ Me téléporter au Favori 8"),
+      OBFUSCATE("168_Button_📌 Mémoriser lieu actuel → Favori 9"),
+      OBFUSCATE("178_Button_✈️ Me téléporter au Favori 9"),
+      OBFUSCATE("169_Button_📌 Mémoriser lieu actuel → Favori 10"),
+      OBFUSCATE("179_Button_✈️ Me téléporter au Favori 10"),
+
+      // ======= ADMIN =======
+      OBFUSCATE("Category_👑 ADMIN"),
+      OBFUSCATE("155_Toggle_Panel Admin [Accès VIP et actions RP]"),
+
+      // ======= ANTI-BAN =======
+      OBFUSCATE("Category_🆔 ANTI-BAN"),
+      // ⚠ À utiliser UNIQUEMENT en cas de ban : supprime le compte invité actuel
+      // et génère une nouvelle identité device → tu repars sur un compte vierge.
+      OBFUSCATE("153_Toggle_⚠ Anti-Ban [EN CAS DE BAN UNIQUEMENT — supprime le compte invité actuel]"),
+      OBFUSCATE("154_Button_Régénérer Device ID [nouveau GUID + Model + Name]"),
+  };
+  int n = sizeof(f) / sizeof(f[0]);
+  jobjectArray ret = (jobjectArray)env->NewObjectArray(
+      n, env->FindClass(OBFUSCATE("java/lang/String")), env->NewStringUTF(""));
+  for (int i = 0; i < n; i++)
+    env->SetObjectArrayElement(ret, i, env->NewStringUTF(f[i]));
+  return ret;
+}
+
+#define TOG(p)                                                                 \
+  {                                                                            \
+    bool v = (p).isValid();                                                    \
+    LOGI(DBG ": patch " #p " valid=%d on=%d", v, (int)on);                     \
+    if (b_PatchesReady && v) {                                                 \
+      bool r = on ? (p).Modify() : (p).Restore();                              \
+      LOGI(DBG ": Modify result=%d", r);                                       \
+    }                                                                          \
+  }
+
+
+static bool g_HooksApplied = false;
+void ApplyBackgroundHooks() {
+    if (g_HooksApplied) return;
+    g_HooksApplied = true;
+    uintptr_t B = g_base;
+    if (!B) return;
+    fn_GetRigidbodyComponent = (GetRigidbodyComponent_t)(B + 0x3260334);
+    fn_SetIsKinematic        = (SetIsKinematic_t)(B + 0x325B488);
+    DobbyHook((void *)(B + 0x3262620), (dobby_dummy_func_t)hook_PreSimulationUpdate, (dobby_dummy_func_t *)&orig_PreSimulationUpdate);
+    DobbyHook((void *)(B + 0x3252120), (dobby_dummy_func_t)hook_InternalHitFilter, (dobby_dummy_func_t *)&orig_InternalHitFilter);
+    DobbyHook((void *)(B + 0x326C2C4), (dobby_dummy_func_t)hook_SetVelocity, (dobby_dummy_func_t *)&orig_SetVelocity);
+    DobbyHook((void *)(B + 0x326C36C), (dobby_dummy_func_t)hook_SetPlanarVelocity, (dobby_dummy_func_t *)&orig_SetPlanarVelocity);
+    DobbyHook((void*)(B + 0x42A9974), (dobby_dummy_func_t)hook_SetFieldOfView, (dobby_dummy_func_t*)&orig_SetFieldOfView);
+    DobbyHook((void *)(B + 0x42AE5A8), (dobby_dummy_func_t)hook_FireOnPreCull, (dobby_dummy_func_t *)&orig_FireOnPreCull);
+    regenerateFakeDeviceId();
+    DobbyHook((void*)(B + 0x4301BA8), (dobby_dummy_func_t)hook_GetDeviceUniqueIdentifier, (dobby_dummy_func_t*)&orig_GetDeviceUniqueIdentifier);
+    DobbyHook((void*)(B + 0x4301C48), (dobby_dummy_func_t)hook_GetDeviceModel, (dobby_dummy_func_t*)&orig_GetDeviceModel);
+    DobbyHook((void*)(B + 0x4301BF8), (dobby_dummy_func_t)hook_GetDeviceName, (dobby_dummy_func_t*)&orig_GetDeviceName);
+    DobbyHook((void*)(B + 0x2AF9188), (dobby_dummy_func_t)hook_GetAuthUniqueIdentifier, (dobby_dummy_func_t*)&orig_GetAuthUniqueIdentifier);
+    Aimbot_InstallHooks(B);
+    // InstallHooks();
+    Esp_Init(B);
+    LOGI("GRAVITY: All background hooks applied manually via toggle!");
+}
+
+void Changes(JNIEnv *env, jclass clazz, jobject obj, jint id, jstring str, jint intVal, jlong longVal,
+             jboolean on, jstring str2) {
+  LOGI(DBG ": id=%d on=%d ready=%d val=%d", id, (int)on, (int)b_PatchesReady,
+       intVal);
+  // ============================================================
+  // MENU V153 — UNIQUEMENT FONCTIONS SANS INCIDENCE SUR LES TIRS
+  // Tous les toggles touchant à la chaîne damage/weapon/attack
+  // (god mode, munitions, aimbot, wall-bang, etc.) ont été
+  // RETIRÉS car ils cassaient les dégâts sortants.
+  // ============================================================
+  switch (id) {
+    case 1:
+      if (on) { ApplyBackgroundHooks(); }
+      break;
+  // --- GOD MODE (toggle 13) ---
+  // ⚠ Compromis assumé : les peds ennemis ne peuvent pas mourir non plus
+  // tant que god mode est ON (HealthSync, DeadSync, etc. sont globaux).
+  // Désactiver 1 sec pour tirer, réactiver après.
+  case 13:
+    TOG(patch_Knockout1);       // SetUnconsciousKnockout → RET
+    TOG(patch_Knockout2);       // ApplyMeleeKnockoutForce → RET
+    TOG(patch_HealthSync);      // ElementHealthSyncSystem → RET
+    TOG(patch_DeadSync);        // PedDeadSyncSystem → RET
+    TOG(patch_ProcessDead);     // PedProcessDeadSystem → RET
+    TOG(patch_PedKill);         // PedKillSystem → RET
+    TOG(patch_VehicleNoDamage); // VehicleDamageSystem → RET
+    TOG(patch_GhostMelee);      // WeaponAttackMeleeReceiveSystem → RET
+    TOG(patch_DeathUI1); TOG(patch_DeathUI2); TOG(patch_DeathUI3);
+    TOG(patch_HudDeathCreate); TOG(patch_HudDeathInit); TOG(patch_HudDeathWatch);
+    // V154 — God Mode v2 : bloque l'animation KO/mort + l'état unconscious + cleanup melee
+    TOG(patch_UnconsciousDetect);    // PedViewHealthUnconsciousDetectSystem
+    TOG(patch_MeleeKnockoutCleanup); // MeleeCombatKnockoutCleanupSystem
+    TOG(patch_DeadKnockoutRestore);  // PedViewDeadKnockoutRestoreSystem
+    TOG(patch_KnockoutSync);         // PedViewKnockoutSystem
+    TOG(patch_RagDollState);         // RagDollState.UpdateState
+    LOGI(DBG ": GodMode V2 toggle=%d (GhostMelee remis, GhostBullet OFF)", (int)on);
+    break;
+
+  // --- MUNITIONS INFINIES (toggle 89) ---
+  // patch_AttackEnd RETIRÉ (V144) car bloquait le cycle d'attaque après
+  // le 1er tir. Workaround : prendre l'arme AVEC munitions AVANT d'activer.
+  case 89:
+    TOG(patch_InfAmmo);    // WeaponAmmoDecreaseSystem
+    TOG(patch_InfAmmoInv); // PedWeaponAmmoRemoveSystem
+    LOGI(DBG ": Munitions Infinies toggle=%d", (int)on);
+    break;
+
+  // --- EMANUEL HACKS ---
+  case 250:
+    TOG(patch_NotKo);
+    TOG(patch_Knockout1);
+    TOG(patch_KoState);
+    LOGI(DBG ": Emanuel Anti-Knockout toggle=%d", (int)on);
+    break;
+
+  case 251:
+    TOG(patch_OnePunch);
+    LOGI(DBG ": Emanuel One Punch toggle=%d", (int)on);
+    break;
+
+  // --- IL2CPP DUMP CLASSES (button 252) ---
+  // Émet dans logcat la liste des fields (name+offset+type) des classes
+  // critiques du jeu (Health, Weapon, Stamina, Economy). À filtrer avec
+  // `adb logcat -s EmanuelIL2CPP`. Utiliser une fois en jeu pour identifier
+  // les vrais noms des fields privés avant d'implémenter d'autres features
+  // reflection-based.
+  case 252:
+    LOGI(DBG ": 🔬 IL2CPP bootstrap dump requested");
+    EmanuelIL2CPP_BootstrapDump();
+    break;
+
+  // --- GODMODE REFLECTION (toggle 253) ---
+  // Technique Emanuel : pas de byte-patch sur libil2cpp.so. À la place, un
+  // thread bg scanne Object.FindObjectsOfTypeAll(ElementHealthSync) et écrit
+  // la santé max dans le field "Value" (ou équivalent identifié par 252).
+  // Avantage : résiste aux mises à jour du jeu. Inconvénient : risque de
+  // désync serveur (même problème que patch_HealthSync statique).
+  case 253:
+    if (on) {
+      EmanuelIL2CPP_StartGodModeReflection();
+    } else {
+      EmanuelIL2CPP_StopGodModeReflection();
+    }
+    LOGI(DBG ": 🛡 GodMode Reflection toggle=%d", (int)on);
+    break;
+
+  // --- NETSNIFF (toggle 254 + button 255) ---
+  // Capture tout le trafic socket (TCP/UDP) et SSL (HTTPS déchiffré) du
+  // jeu. Fichier binaire : /data/data/<pkg>/files/netsniff.bin
+  // Log lisible    : /data/data/<pkg>/files/netsniff.log
+  // Récupération :
+  //   adb pull /data/data/com.Chillgaming.oneState/files/netsniff.bin .
+  //   adb pull /data/data/com.Chillgaming.oneState/files/netsniff.log .
+  // Détection JWT auto : "🔑 JWT detected" dans logcat dès qu'un token
+  // passe dans un buffer.
+  case 254:
+    NetSniff_SetEnabled((bool)on);
+    break;
+  case 255:
+    NetSniff_Flush();
+    LOGI(DBG ": 💾 NetSniff flush requested");
+    break;
+
+  // --- MONDE : Mode Jour Permanent (Enviro time-of-day) ---
+  case 75: TOG(patch_DayMode); break;
+
+  // --- MOUVEMENT : NoClip (CharacterActor IsKinematic) ---
+  // ⚠ ROOT CAUSE NO DAMAGE : ce toggle casse les raycast d'arme. Quand ON,
+  // tu ne peux PAS faire de dégâts. Toujours désactiver avant de tirer.
+  // Hooks Dobby installés au boot ; ce toggle bascule juste le flag global.
+  // Quand OFF, on déclenche un burst de 1 sec qui force IsKinematic=false
+  // sur tous les peds pour les rendre dynamiques instantanément.
+  case 109:
+    g_NoClipEnabled = (bool)on;
+    if (!on) g_NoClipRestoreUntilMs = noclip_now_ms() + 1000;
+    LOGI(DBG ": NoClip enabled=%d", (int)g_NoClipEnabled);
+    break;
+
+  // --- ESP + AIMBOT (toggle 120) ---
+  case 120:
+    Esp_SetEnabled((bool)on);
+    Aimbot_SetEnabled((bool)on);
+    LOGI(DBG ": ESP+AIMBOT enabled=%d", (int)on);
+    break;
+
+  // --- WALL-BANG (toggle 132, indépendant) ---
+  // Téléporte l'origine du raycast à 0.5m devant la cible aimbot. Nécessite
+  // que toggle 120 soit ON.
+  case 132:
+    Aimbot_SetWallBang((bool)on);
+    LOGI(DBG ": WallBang enabled=%d", (int)on);
+    break;
+
+  // --- SLIDER VITESSE (10..30 = 1.0x..3.0x) ---
+  // Hook désactivé si curseur à 10 (vitesse normale).
+  case 143: {
+    int v = intVal;
+    if (v < 10) v = 10;
+    if (v > 30) v = 30;
+    g_SpeedMultiplier = (float)v / 10.0f;
+    g_SuperSpeedEnabled = (v != 10);
+    LOGI(DBG ": SpeedMultiplier=%.2fx enabled=%d (raw=%d)",
+         g_SpeedMultiplier, (int)g_SuperSpeedEnabled, intVal);
+    break;
+  }
+
+  // --- DOT MODE : ESP point au centre au lieu de box ---
+  case 152:
+    Esp_SetDotMode((bool)on);
+    LOGI(DBG ": DotMode=%d", (int)on);
+    break;
+
+  // --- ANTI-BAN : Device ID Faker + Wipe au prochain boot ---
+  case 153: {
+    g_DeviceIdFaker = (bool)on;
+    if (on) {
+      regenerateFakeDeviceId();
+      scheduleWipeNextBoot();
+      wipeAppDataIfFlagged(); // EXÉCUTION IMMÉDIATE POUR DEBAN SANS REDÉMARRER
+      LOGI(DBG ": DeviceIdFaker ON id=%s — WIPE programmé au prochain démarrage et exécution immédiate",
+           g_FakeDeviceId);
+    } else {
+      char flag[512]; getWipeFlagPath(flag, sizeof(flag));
+      if (flag[0]) unlink(flag);
+      LOGI(DBG ": DeviceIdFaker OFF — wipe pending annulé");
+    }
+    break;
+  }
+
+  // --- BOUTON RÉGÉNÉRER DEVICE ID ---
+  case 154:
+    regenerateFakeDeviceId();
+    LOGI(DBG ": Device ID régénéré = %s (faker actif=%d)",
+         g_FakeDeviceId, (int)g_DeviceIdFaker);
+    break;
+
+  // --- ADMIN PANEL (toggle 155) ---
+  case 155:
+    TOG(patch_GetLevel); TOG(patch_HasLevel); TOG(patch_HasRights); TOG(patch_HasRights2);
+    TOG(patch_DiplomaPanel); TOG(patch_DiplomaCheck); TOG(patch_DiplomaPenalty); TOG(patch_DiplomaPardon);
+    TOG(patch_DiplomaClear); TOG(patch_DiplomaHistory); TOG(patch_DiplomaSync1); TOG(patch_DiplomaSync2);
+    TOG(patch_RateAdmin); TOG(patch_FactionSurvey);
+    TOG(patch_AdminChatCreate); TOG(patch_AdminChatInitUi); TOG(patch_AdminChatAddMsg); TOG(patch_AdminChatAddSync);
+    TOG(patch_AdminChatSendSync); TOG(patch_AdminChatToggle); TOG(patch_AdminChatCloseSync); TOG(patch_AdminChatCreateSync);
+    TOG(patch_DiplomaPageResult); TOG(patch_DiplomaCreateSys); TOG(patch_DiplomaInitUiSys); TOG(patch_DiplomaPardonCreate);
+    TOG(patch_DiplomaPardonInit); TOG(patch_DiplomaPenaltyCreate); TOG(patch_DiplomaPenaltyInit); TOG(patch_DiplomaResponseSync);
+    TOG(patch_RateAdminCreate); TOG(patch_RateAdminInitUi); TOG(patch_RateAdminSend); TOG(patch_RateAdminReason); TOG(patch_RateAdminStars);
+    TOG(patch_RemoveRightsH); TOG(patch_ChangeAccessH);
+    TOG(patch_AdminIcon);
+    TOG(patch_AntiBan1); TOG(patch_AntiBan2);
+    LOGI(DBG ": Admin Panel toggle=%d", (int)on);
+    break;
+
+  // --- DANCE PARTY (toggle 201) ---
+  // Active aussi la gravité réduite (effet "tout le monde flotte / danse").
+  // Pour la musique : dropper un fichier MP3 sur le device dans
+  //   /sdcard/Download/gravity_dance.mp3
+  // Java MediaPlayer le lira automatiquement quand le toggle s'allume (voir
+  // EspBridge.dancePartyStart()). Si le fichier n'existe pas, juste l'effet
+  // gravité s'applique.
+  case 201:
+    TOG(patch_LowGravity);
+    LOGI(DBG ": DANCE PARTY toggle=%d (musique = /sdcard/Download/gravity_dance.mp3 si dispo)", (int)on);
+    break;
+
+  // --- PLAYER SCALE (slider 190) ---
+  case 190: {
+    int v = intVal;
+    if (v < 5) v = 5;
+    if (v > 50) v = 50;
+    g_PlayerScale = (float)v / 10.0f;
+    g_PlayerScaleEnabled = (v != 10);
+    LOGI(DBG ": PlayerScale=%.2fx enabled=%d", g_PlayerScale, (int)g_PlayerScaleEnabled);
+    break;
+  }
+
+  // --- FLY HACK (toggle 191) ---
+  case 191:
+    g_FlyEnabled = (bool)on;
+    TOG(patch_FlyGravity);
+    LOGI(DBG ": Fly Hack enabled=%d", (int)g_FlyEnabled);
+    break;
+
+  // --- SUPER JUMP (toggle 192) ---
+  case 192:
+    TOG(patch_SuperJump);
+    LOGI(DBG ": Super Jump enabled=%d", (int)on);
+    break;
+
+  // --- CAMERA FOV (slider 193) ---
+  case 193: {
+    int v = intVal;
+    if (v < 60) v = 60;
+    if (v > 140) v = 140;
+    g_CameraFov = (float)v;
+    g_CameraFovEnabled = true;
+    LOGI(DBG ": CameraFOV=%.0f", g_CameraFov);
+    break;
+  }
+
+  // --- ESP LINE (toggle 194) ---
+  case 194:
+    Esp_SetLineEnabled((bool)on);
+    LOGI(DBG ": ESP Line=%d", (int)on);
+    break;
+
+  // --- ESP BOX (toggle 195) ---
+  case 195:
+    Esp_SetBoxEnabled((bool)on);
+    LOGI(DBG ": ESP Box=%d", (int)on);
+    break;
+
+  // --- ESP DISTANCE (toggle 196) ---
+  case 196:
+    Esp_SetDistanceEnabled((bool)on);
+    LOGI(DBG ": ESP Distance=%d", (int)on);
+    break;
+
+  // --- ESP MARKER (toggle 197) ---
+  case 197:
+    Esp_SetMarkerEnabled((bool)on);
+    LOGI(DBG ": ESP Marker=%d", (int)on);
+    break;
+
+  // --- ESP DYNAMIC COLOR (toggle 198) ---
+  case 198:
+    Esp_SetDynamicColor((bool)on);
+    LOGI(DBG ": ESP DynamicColor=%d", (int)on);
+    break;
+
+  // --- VEHICLE WATER DRIVING (toggle 199) ---
+  case 199:
+    TOG(patch_VehicleWater);
+    LOGI(DBG ": Vehicle Water=%d", (int)on);
+    break;
+
+  // --- VEHICLE SUPER SPEED (toggle 200) ---
+  case 200:
+    TOG(patch_VehicleSuperSpeed);
+    LOGI(DBG ": Vehicle SuperSpeed=%d", (int)on);
+    break;
+
+  // --- BULLET DISTANCE (toggle 202) ---
+  case 202:
+    g_BulletDistanceEnabled = (bool)on;
+    TOG(patch_BulletDist);
+    LOGI(DBG ": BulletDistance=%d", (int)on);
+    break;
+
+  // --- DAMAGE BOOST (slider 203) ---
+  case 203: {
+    int v = intVal;
+    if (v < 12) v = 12;
+    if (v > 30) v = 30;
+    g_DamageMultiplier = (float)v / 10.0f;
+    g_DamageBoostEnabled = (v != 10);
+    LOGI(DBG ": DamageMultiplier=%.2fx enabled=%d", g_DamageMultiplier, (int)g_DamageBoostEnabled);
+    break;
+  }
+
+  // --- VOITURE INCASSABLE (toggle 204) ---
+  case 204:
+    TOG(patch_VehicleNoDamage);
+    LOGI(DBG ": Vehicle NoDamage=%d", (int)on);
+    break;
+
+  // --- PAS DE RECHARGEMENT (toggle 205) ---
+  case 205:
+    TOG(patch_NoReload);
+    LOGI(DBG ": NoReload toggle=%d", (int)on);
+    break;
+
+  // --- AIM BOT TÊTE (toggle 206) ---
+  case 206:
+    if (on) { g_AimBotMode = 1; g_SilentAimMode = 0; }
+    else if (g_AimBotMode == 1) g_AimBotMode = 0;
+    Aimbot_SetEnabled(g_AimBotMode != 0 || g_SilentAimMode != 0);
+    Esp_SetEnabled(g_AimBotMode != 0 || g_SilentAimMode != 0);
+    LOGI(DBG ": AimBot Tête=%d", g_AimBotMode);
+    break;
+
+  // --- AIM BOT TORSE (toggle 207) ---
+  case 207:
+    if (on) { g_AimBotMode = 2; g_SilentAimMode = 0; }
+    else if (g_AimBotMode == 2) g_AimBotMode = 0;
+    Aimbot_SetEnabled(g_AimBotMode != 0 || g_SilentAimMode != 0);
+    Esp_SetEnabled(g_AimBotMode != 0 || g_SilentAimMode != 0);
+    LOGI(DBG ": AimBot Torse=%d", g_AimBotMode);
+    break;
+
+  // --- SILENT AIM TÊTE (toggle 208) ---
+  case 208:
+    if (on) { g_SilentAimMode = 1; g_AimBotMode = 0; }
+    else if (g_SilentAimMode == 1) g_SilentAimMode = 0;
+    Aimbot_SetEnabled(g_AimBotMode != 0 || g_SilentAimMode != 0);
+    Esp_SetEnabled(g_AimBotMode != 0 || g_SilentAimMode != 0);
+    LOGI(DBG ": Silent Aim Tête=%d", g_SilentAimMode);
+    break;
+
+  // --- SILENT AIM TORSE (toggle 209) ---
+  case 209:
+    if (on) { g_SilentAimMode = 2; g_AimBotMode = 0; }
+    else if (g_SilentAimMode == 2) g_SilentAimMode = 0;
+    Aimbot_SetEnabled(g_AimBotMode != 0 || g_SilentAimMode != 0);
+    Esp_SetEnabled(g_AimBotMode != 0 || g_SilentAimMode != 0);
+    LOGI(DBG ": Silent Aim Torse=%d", g_SilentAimMode);
+    break;
+
+  // --- AIM FOV (slider 210) ---
+  case 210: {
+    int v = intVal;
+    if (v < 30) v = 30;
+    if (v > 180) v = 180;
+    g_AimFov = (float)v;
+    LOGI(DBG ": AimFOV=%.0f", g_AimFov);
+    break;
+  }
+
+  // --- AIM VISIBLE ONLY (toggle 211) ---
+  case 211:
+    g_AimVisibleOnly = (bool)on;
+    LOGI(DBG ": AimVisibleOnly=%d", (int)on);
+    break;
+
+  // --- VISIBILITY CHECK OUTLINE (toggle 212) ---
+  case 212:
+    g_VisCheckOutline = (bool)on;
+    LOGI(DBG ": VisCheckOutline=%d", (int)on);
+    break;
+
+  // --- VISIBILITY CHECK SHADING (toggle 213) ---
+  case 213:
+    g_VisCheckShading = (bool)on;
+    LOGI(DBG ": VisCheckShading=%d", (int)on);
+    break;
+
+  // --- FOV PRESETS (button 214-217) ---
+  case 214: g_CameraFov = 80.0f;  g_CameraFovEnabled = true; LOGI(DBG ": FOV preset = 80"); break;
+  case 215: g_CameraFov = 100.0f; g_CameraFovEnabled = true; LOGI(DBG ": FOV preset = 100"); break;
+  case 216: g_CameraFov = 120.0f; g_CameraFovEnabled = true; LOGI(DBG ": FOV preset = 120"); break;
+  case 217: g_CameraFov = 140.0f; g_CameraFovEnabled = true; LOGI(DBG ": FOV preset = 140"); break;
+
+  // --- WALLHACK VOITURES (toggle 218) ---
+  case 218:
+    g_VehicleWallhack = (bool)on;
+    LOGI(DBG ": Vehicle Wallhack=%d", (int)on);
+    break;
+
+  // --- VEHICLE KILL ENEMY (button 219) ---
+  case 219: {
+    float tx = 0, ty = 0, tz = 0;
+    if (Esp_GetBestTargetWorld(&tx, &ty, &tz)) {
+      // Téléporte le local sur l'ennemi avec impact (effet "voiture qui tue")
+      bool ok = Teleport_ToPosition(tx, ty + 0.5f, tz);
+      LOGI(DBG ": 💀 Vehicle Kill → (%.1f, %.1f, %.1f) ok=%d", tx, ty, tz, (int)ok);
+    } else {
+      LOGI(DBG ": 💀 Vehicle Kill ECHEC : aucune cible");
+    }
+    break;
+  }
+
+  // --- TP VOITURE VERS MARQUEUR (button 220) ---
+  // V162 FIX : utilise le waypoint carté (g_LastWaypoint*) au lieu du Slot 1
+  // qui n'avait rien à voir avec un marqueur de carte. Quand on est dans une
+  // voiture, téléporter le joueur = téléporter la voiture aussi (le ped
+  // reste assis dedans). +1.5m en Y pour ne pas spawn sous le sol.
+  case 220: {
+    if (!g_HasWaypoint) {
+      LOGI(DBG ": 🚀 TP Voiture vers Marqueur ECHEC : aucun marqueur posé sur la carte. Pose-en un sur la mini-map d'abord.");
+      break;
+    }
+    bool ok = Teleport_ToPosition(g_LastWaypointX, g_LastWaypointY + 1.5f, g_LastWaypointZ);
+    LOGI(DBG ": 🚀 TP Voiture vers Marqueur → (%.1f, %.1f, %.1f) ok=%d",
+         g_LastWaypointX, g_LastWaypointY, g_LastWaypointZ, (int)ok);
+    break;
+  }
+
+  // --- FARM MONEY (toggle 221) ---
+  case 221:
+    g_FarmMoneyEnabled = (bool)on;
+    LOGI(DBG ": Farm Money=%d", (int)on);
+    break;
+
+  // --- AUTO WORK / TAXI (toggle 222) ---
+  case 222:
+    g_AutoWorkEnabled = (bool)on;
+    LOGI(DBG ": Auto Work=%d", (int)on);
+    break;
+
+  // --- AUTO CLICK (toggle 223) ---
+  case 223:
+    g_AutoClickEnabled = (bool)on;
+    LOGI(DBG ": Auto Click=%d", (int)on);
+    break;
+
+  // --- VOL ARMÉE (toggle 224) ---
+  case 224:
+    g_StealArmyMaterialsEnabled = (bool)on;
+    LOGI(DBG ": Steal Army=%d", (int)on);
+    break;
+
+  // --- TP ENEMY 10s (toggle 225) ---
+  case 225:
+    g_TpEnemy10sEnabled = (bool)on;
+    LOGI(DBG ": TP Enemy 10s=%d", (int)on);
+    break;
+
+  // --- TP POINT DE PÊCHE (button 226) ---
+  case 226: {
+    // Téléporte au plus proche point de pêche (utilise un offset générique côte)
+    bool ok = Teleport_ToPosition(-1700.0f, 0.0f, -1100.0f);
+    LOGI(DBG ": 🎣 TP Pêche ok=%d", (int)ok);
+    break;
+  }
+
+  // --- TP MARQUEUR JOUEUR (button 227) ---
+  // Téléporte le joueur au waypoint placé sur la mini-map. Le hook
+  // CreateMapGpsCheckpoint.ctor (@ 0x26701F0) capture la position chaque
+  // fois que l'utilisateur pose un marqueur → stockée dans
+  // g_LastWaypointX/Y/Z + flag g_HasWaypoint.
+  case 227: {
+    if (!g_HasWaypoint) {
+      LOGI(DBG ": 📍 TP Marqueur Joueur ECHEC : aucun marqueur posé sur la carte. "
+           "Pose-en un d'abord en cliquant sur la mini-map.");
+      break;
+    }
+    bool ok = Teleport_ToPosition(g_LastWaypointX,
+                                  g_LastWaypointY + 1.0f,
+                                  g_LastWaypointZ);
+    LOGI(DBG ": 📍 TP Marqueur Joueur → (%.1f, %.1f, %.1f) ok=%d",
+         g_LastWaypointX, g_LastWaypointY, g_LastWaypointZ, (int)ok);
+    break;
+  }
+
+  // --- TP MARQUEUR VOITURE (button 228) ---
+  // Même cible (waypoint carte) mais petit offset Y pour ne pas spawn
+  // sous le sol si on est en voiture (la voiture suit le joueur quand on
+  // est assis dedans, donc TP joueur = TP voiture).
+  case 228: {
+    if (!g_HasWaypoint) {
+      LOGI(DBG ": 🚗 TP Marqueur Voiture ECHEC : aucun marqueur posé. "
+           "Pose-en un sur la mini-map d'abord.");
+      break;
+    }
+    bool ok = Teleport_ToPosition(g_LastWaypointX,
+                                  g_LastWaypointY + 1.5f,
+                                  g_LastWaypointZ);
+    LOGI(DBG ": 🚗 TP Marqueur Voiture → (%.1f, %.1f, %.1f) ok=%d",
+         g_LastWaypointX, g_LastWaypointY, g_LastWaypointZ, (int)ok);
+    break;
+  }
+
+  // --- TP HÔPITAL (button 229) ---
+  case 229: {
+    bool ok = Teleport_ToPosition(295.0f, 65.0f, -1450.0f);
+    LOGI(DBG ": 🏥 TP Hôpital ok=%d", (int)ok);
+    break;
+  }
+
+  // --- MEU DESTINO (toggle 230) ---
+  case 230:
+    g_MeuDestinoEnabled = (bool)on;
+    LOGI(DBG ": Meu Destino=%d", (int)on);
+    break;
+
+  // --- ENNEMI GÉANT (button 231) ---
+  case 231:
+    g_PlayerScale = 5.0f;
+    g_PlayerScaleEnabled = true;
+    LOGI(DBG ": 👹 Ennemi Géant : scale=5x");
+    break;
+
+  // --- TAILLE PRESETS (button 232-235) ---
+  case 232: g_PlayerScale = 2.0f; g_PlayerScaleEnabled = true; LOGI(DBG ": Taille 2x"); break;
+  case 233: g_PlayerScale = 3.0f; g_PlayerScaleEnabled = true; LOGI(DBG ": Taille 3x"); break;
+  case 234: g_PlayerScale = 4.0f; g_PlayerScaleEnabled = true; LOGI(DBG ": Taille 4x"); break;
+  case 235: g_PlayerScale = 5.0f; g_PlayerScaleEnabled = true; LOGI(DBG ": Taille 5x"); break;
+
+  // --- FOLLOW SPEED (slider 236) ---
+  case 236: {
+    int v = intVal;
+    if (v < 10) v = 10;
+    if (v > 100) v = 100;
+    g_FollowSpeed = (float)v;
+    LOGI(DBG ": Follow Speed=%.1f", g_FollowSpeed);
+    break;
+  }
+
+  // --- AUTO-CHECKPOINT (toggle 237) ---
+  // Force le système QuestStepGoToCheckpointStart à considérer que le joueur
+  // est TOUJOURS déjà sur le checkpoint → ProcessEnterCheckpoint est appelé
+  // immédiatement, la quête/job/event progresse sans bouger.
+  // Comme le mod Malvado : "les checkpoints viennent au joueur".
+  case 237:
+    TOG(patch_AutoCheckpoint);
+    LOGI(DBG ": 🎯 Auto-Checkpoint toggle=%d", (int)on);
+    break;
+
+  // --- TELEPORT SLOTS PERSISTANTS (10 slots, sauvés sur disque) ---
+  // 160-169 : Save Slot 1-10 / 170-179 : Go Slot 1-10
+  case 160: { bool ok = Teleport_SaveSlot(0); LOGI(DBG ": Save Slot 1 ok=%d", (int)ok); break; }
+  case 161: { bool ok = Teleport_SaveSlot(1); LOGI(DBG ": Save Slot 2 ok=%d", (int)ok); break; }
+  case 162: { bool ok = Teleport_SaveSlot(2); LOGI(DBG ": Save Slot 3 ok=%d", (int)ok); break; }
+  case 163: { bool ok = Teleport_SaveSlot(3); LOGI(DBG ": Save Slot 4 ok=%d", (int)ok); break; }
+  case 164: { bool ok = Teleport_SaveSlot(4); LOGI(DBG ": Save Slot 5 ok=%d", (int)ok); break; }
+  case 165: { bool ok = Teleport_SaveSlot(5); LOGI(DBG ": Save Slot 6 ok=%d", (int)ok); break; }
+  case 166: { bool ok = Teleport_SaveSlot(6); LOGI(DBG ": Save Slot 7 ok=%d", (int)ok); break; }
+  case 167: { bool ok = Teleport_SaveSlot(7); LOGI(DBG ": Save Slot 8 ok=%d", (int)ok); break; }
+  case 168: { bool ok = Teleport_SaveSlot(8); LOGI(DBG ": Save Slot 9 ok=%d", (int)ok); break; }
+  case 169: { bool ok = Teleport_SaveSlot(9); LOGI(DBG ": Save Slot 10 ok=%d", (int)ok); break; }
+  case 170: { bool ok = Teleport_GoSlot(0); LOGI(DBG ": Go Slot 1 ok=%d", (int)ok); break; }
+  case 171: { bool ok = Teleport_GoSlot(1); LOGI(DBG ": Go Slot 2 ok=%d", (int)ok); break; }
+  case 172: { bool ok = Teleport_GoSlot(2); LOGI(DBG ": Go Slot 3 ok=%d", (int)ok); break; }
+  case 173: { bool ok = Teleport_GoSlot(3); LOGI(DBG ": Go Slot 4 ok=%d", (int)ok); break; }
+  case 174: { bool ok = Teleport_GoSlot(4); LOGI(DBG ": Go Slot 5 ok=%d", (int)ok); break; }
+  case 175: { bool ok = Teleport_GoSlot(5); LOGI(DBG ": Go Slot 6 ok=%d", (int)ok); break; }
+  case 176: { bool ok = Teleport_GoSlot(6); LOGI(DBG ": Go Slot 7 ok=%d", (int)ok); break; }
+  case 177: { bool ok = Teleport_GoSlot(7); LOGI(DBG ": Go Slot 8 ok=%d", (int)ok); break; }
+  case 178: { bool ok = Teleport_GoSlot(8); LOGI(DBG ": Go Slot 9 ok=%d", (int)ok); break; }
+  case 179: { bool ok = Teleport_GoSlot(9); LOGI(DBG ": Go Slot 10 ok=%d", (int)ok); break; }
+
+  // --- GRAPPLER : se téléporter sur la cible aimbot la plus proche ---
+  case 180: {
+    float tx = 0, ty = 0, tz = 0;
+    if (Esp_GetBestTargetWorld(&tx, &ty, &tz)) {
+      bool ok = Teleport_ToPosition(tx, ty + 1.5f, tz);
+      LOGI(DBG ": 🪝 Grappler → cible (%.1f, %.1f, %.1f) ok=%d", tx, ty, tz, (int)ok);
+    } else {
+      LOGI(DBG ": 🪝 Grappler ECHEC : aucune cible visible");
+    }
+    break;
+  }
+
+  // --- AUTO-FOLLOW TARGET (toggle 181) ---
+  case 181:
+    Esp_SetAutoFollow((bool)on);
+    LOGI(DBG ": 🛸 Auto-Follow toggle=%d", (int)on);
+    break;
+
+  default:
+    if (id == 601) {
+        // TP Prochain Tag
+        bool ok = Esp_TeleportToNextGraffiti();
+        if (!ok) LOGI(DBG ": 🎨 TP Tag ECHEC (aucun tag chargé aux alentours)");
+    } else if (id == 602) {
+        Esp_AutoMapGraffiti((bool)on);
+        LOGI(DBG ": 🗺️ Auto-Scanner de Tags: %d", (int)on);
+    }
+    break;
+  }
+}
+}

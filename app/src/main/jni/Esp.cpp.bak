@@ -1,0 +1,1449 @@
+#include "Esp.h"
+#include "GravityGL/Offsets.h"
+#include "Aimbot.h"
+#include "Dobby/dobby.h"
+#include "GraffitiTags.h" // 144 coordonnées extraites du minimap
+#include "Includes/Logger.h"
+#include "il2cpp_bridge.h"
+#include "GravityGL/Offsets.h"
+#include <android/log.h>
+#include <chrono>
+#include <errno.h>
+#include <jni.h>
+#include <math.h>
+#include <stdio.h>
+#include <string.h>
+#include <thread>
+#include <time.h>
+#include <unistd.h>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
+#define E_LOG_TAG "ESP"
+#define E_LOGI(...)                                                            \
+  __android_log_print(ANDROID_LOG_INFO, E_LOG_TAG, __VA_ARGS__)
+#define E_LOGE(...)                                                            \
+  __android_log_print(ANDROID_LOG_ERROR, E_LOG_TAG, __VA_ARGS__)
+
+extern uintptr_t g_base;
+
+static const float kAimMaxDist = 5000.0f;
+// kAimHeightAboveFeet est maintenant DYNAMIQUE selon le mode :
+//   - g_AimBotMode/g_SilentAimMode = 1 → Tête (1.7m above feet)
+//   - g_AimBotMode/g_SilentAimMode = 2 → Torse (1.0m above feet)
+//   - 0 → défaut Tête
+extern int g_AimBotMode;
+extern int g_SilentAimMode;
+extern float g_AimFov;
+extern bool g_AimVisibleOnly;
+extern int g_BonePriority; // 0=Torso, 1=Neck, 2=Head, 3=Pelvis
+
+static float getAimHeight() {
+  switch (g_BonePriority) {
+  case 1:
+    return 1.3f; // Neck
+  case 2:
+    return 1.5f; // Head
+  case 3:
+    return 0.5f; // Pelvis
+  case 0:
+  default:
+    return 1.0f; // Torso
+  }
+}
+
+// Log fichier persistant lisible par l'utilisateur sans adb logcat. Utilisé
+// pour le diagnostic du teleport (le user a signalé ne pas pouvoir voir les
+// logs adb de son côté).
+#include <stdarg.h>
+#include <stdio.h>
+
+static void TPLOG(const char *fmt, ...) {
+  FILE *f = fopen("/sdcard/Download/teleport.log", "ab");
+  if (!f)
+    return;
+  va_list ap;
+  va_start(ap, fmt);
+  vfprintf(f, fmt, ap);
+  va_end(ap);
+  fputc('\n', f);
+  fclose(f);
+}
+
+// === Vec3 ===
+// struct V3 { float x, y, z; }; // Defini dans Aimbot.h
+static inline V3 v3(float x, float y, float z) {
+  V3 v = {x, y, z};
+  return v;
+}
+static inline V3 v3sub(V3 a, V3 b) {
+  return v3(a.x - b.x, a.y - b.y, a.z - b.z);
+}
+static inline float v3len(V3 a) {
+  return sqrtf(a.x * a.x + a.y * a.y + a.z * a.z);
+}
+
+// === IL2CPP function pointers (resolved in Esp_Init) ===
+// UnityEngine.Camera.get_main @ 0x41F4AC4
+typedef void *(*Camera_get_main_t)(void);
+static Camera_get_main_t fn_Camera_get_main = nullptr;
+
+// UnityEngine.Component.get_gameObject @ 0x423D648 (component -> gameObject)
+typedef void *(*Component_get_gameObject_t)(void *self);
+static Component_get_gameObject_t fn_get_gameObject = nullptr;
+
+// UnityEngine.Object.get_name @ 0x4245A70 (object -> System.String*)
+typedef void *(*Object_get_name_t)(void *self);
+static Object_get_name_t fn_get_name = nullptr;
+
+// === Helper: convertit System.String* IL2CPP en C-string ASCII (caractères
+// >127 -> '?'). === Layout System.String IL2CPP : klass(8), monitor(8),
+// length(4) @ +0x10, chars[] @ +0x14 (UTF-16).
+static void il2cppStringToChar(void *str, char *out, int outSize) {
+  if (outSize <= 0)
+    return;
+  out[0] = 0;
+  if (!str)
+    return;
+  int len = *(int *)((uint8_t *)str + 0x10);
+  if (len <= 0 || len > 4096)
+    return; // garde-fou
+  uint16_t *chars = (uint16_t *)((uint8_t *)str + 0x14);
+  int n = (len < outSize - 1) ? len : (outSize - 1);
+  for (int i = 0; i < n; i++) {
+    uint16_t c = chars[i];
+    out[i] = (c >= 0x20 && c < 0x7F) ? (char)c : '?';
+  }
+  out[n] = 0;
+}
+
+// === Heuristique de classification du nom GameObject -> EspPedType ===
+// On regarde les patterns courants des noms d'instances dans OneState RP.
+// Si on ne reconnaît rien on retourne ESP_PED_PLAYER par défaut (= autre
+// joueur).
+static int classifyPedByName(const char *name) {
+  if (!name || !*name)
+    return ESP_PED_UNKNOWN;
+  // Match insensible à la casse via comparaison rapide.
+  auto containsCI = [](const char *s, const char *k) -> bool {
+    for (; *s; s++) {
+      const char *a = s;
+      const char *b = k;
+      while (*a && *b) {
+        char ca = *a;
+        char cb = *b;
+        if (ca >= 'A' && ca <= 'Z')
+          ca += 32;
+        if (cb >= 'A' && cb <= 'Z')
+          cb += 32;
+        if (ca != cb)
+          break;
+        a++;
+        b++;
+      }
+      if (!*b)
+        return true;
+    }
+    return false;
+  };
+  // Police (priorité avant NPC car certains noms peuvent contenir les deux).
+  if (containsCI(name, "police") || containsCI(name, "cop") ||
+      containsCI(name, "swat") || containsCI(name, "lspd") ||
+      containsCI(name, "fbi")) {
+    return ESP_PED_POLICE;
+  }
+  //  tous les vrais joueurs ont leur GameObject nommé "PlayerClone"
+  // (c'est le clone du prefab Player). C'est l'identifiant le plus fiable.
+  if (containsCI(name, "playerclone") || containsCI(name, "player(clone)")) {
+    return ESP_PED_PLAYER;
+  }
+  // PNJ / IA explicites.
+  if (containsCI(name, "npc") || containsCI(name, "_ai_") ||
+      containsCI(name, "bot") || containsCI(name, "pedestrian") ||
+      containsCI(name, "civil") || containsCI(name, "vendor") ||
+      containsCI(name, "shop") || containsCI(name, "ambient")) {
+    return ESP_PED_NPC;
+  }
+  // Défaut : PLAYER. Sur  la majorité des peds proches du joueur
+  // qu'il a envie d'esp sont des vrais joueurs. On préfère les marquer
+  // PLAYER (rouge) par défaut quitte à avoir quelques faux positifs PNJ
+  // plutôt que de tout cacher en gris.
+  return ESP_PED_PLAYER;
+}
+
+// === Camera matrices (more reliable than WorldToScreenPoint_Injected) ===
+// UnityEngine.Camera.get_worldToCameraMatrix_Injected  @ 0x41F3930  (void* cam,
+// Matrix4x4* out) UnityEngine.Camera.get_projectionMatrix_Injected     @
+// 0x41F3A68  (void* cam, Matrix4x4* out) UnityEngine.Camera.get_pixelWidth @
+// 0x41F344C  (int  cam) UnityEngine.Camera.get_pixelHeight                   @
+// 0x41F3488  (int  cam)
+struct M4 {
+  float m[16];
+}; // Unity column-major: m[row + col*4]
+typedef void (*GetMat_Injected_t)(void *cam, M4 *out);
+typedef int (*GetPixel_t)(void *cam);
+static GetMat_Injected_t fn_GetView = nullptr;
+static GetMat_Injected_t fn_GetProj = nullptr;
+static GetPixel_t fn_GetPixelW = nullptr;
+static GetPixel_t fn_GetPixelH = nullptr;
+
+// UnityEngine.Component.get_transform @ generic
+// We avoid calling this. Instead we read transform.position via Transform
+// pointer. Lightbug.CharacterControllerPro.Core.CharacterActor inherits
+// PhysicsActor inherits MonoBehaviour. We use transform.position via
+// Camera::get_main approach for camera position only.
+
+// === Camera state captured each frame ===
+static V3 s_camPos = {0, 0, 0};
+static int s_screenW = 1920, s_screenH = 1080;
+static bool s_camValid = false;
+// VP matrice + dims écran caméra au dernier PreCull, lus depuis Java pour
+// projection W2S synchronisée au vsync (élimine le décalage caméra/box).
+static float s_vp16[16] = {0};
+static int s_camPixW = 0, s_camPixH = 0;
+static bool s_vpValid = false;
+
+// === Active CharacterActor set for current frame ===
+static pthread_mutex_t s_mtx = PTHREAD_MUTEX_INITIALIZER;
+static std::vector<void *> s_actorsThisFrame;
+// Persistent buffer of last-frame snapshot (returned to Java)
+static std::vector<EspPed> s_snapshot;
+
+static bool s_enabled = false;
+static bool s_dotMode = false;
+static bool s_lineEnabled = false;
+static bool s_boxEnabled = false;
+static bool s_distanceEnabled = false;
+static bool s_markerEnabled = false;
+static bool s_dynamicColor = false;
+static bool s_crosshairEnabled = false;
+static bool s_crosshairCircleEnabled = false;
+static int s_crosshairCircleRadius = 50;
+static bool s_healthEnabled = false;
+static uintptr_t s_libBase = 0;
+
+// === Teleport state ===
+// Le pointeur du CharacterActor local est mis à jour à chaque FrameTick
+// (= le ped le plus proche de la caméra). Position sauvegardée par
+// l'utilisateur.
+void *s_localActor = nullptr;
+static V3 s_savedPos = {0, 0, 0};
+static bool s_hasSavedPos = false;
+
+static double nowMs() {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
+}
+
+// === IL2CPP scene-scan state ===============================================
+// We resolve once (lazily) the CharacterActor class + Type object + the
+// UnityEngine.Object.FindObjectsOfTypeAll(Type) method, then every ~500 ms we
+// rebuild the actor list. This catches BOTH local and remote peds, including
+// disabled CharacterActor instances on remote peds.
+static bool s_il2cppTried = false;
+static bool s_il2cppReady = false;
+static void *s_charActorClass = nullptr;
+static void *s_charActorTypeObj = nullptr;  // System.Type instance (boxed)
+static void *s_findObjectsMethod = nullptr; // Object.FindObjectsOfTypeAll(Type)
+static double s_lastScanMs = 0;
+static std::vector<void *> s_scannedActors;
+
+static void tryInitIl2cppScan() {
+  if (s_il2cppTried)
+    return;
+  s_il2cppTried = true;
+  if (!g_il2cpp.Init()) {
+    E_LOGE("IL2CPP API unavailable; scene scan disabled");
+    return;
+  }
+  // CharacterActor lives in Assembly-CSharp, namespace
+  // Lightbug.CharacterControllerPro.Core.
+  s_charActorClass = g_il2cpp.FindClassEverywhere(
+      "Lightbug.CharacterControllerPro.Core", "CharacterActor");
+  if (!s_charActorClass) {
+    E_LOGE("CharacterActor class not found");
+    return;
+  }
+  s_charActorTypeObj = g_il2cpp.GetTypeObject(s_charActorClass);
+  if (!s_charActorTypeObj) {
+    E_LOGE("CharacterActor System.Type not retrievable");
+    return;
+  }
+  void *objClass = g_il2cpp.FindClassEverywhere("UnityEngine", "Object");
+  if (!objClass) {
+    E_LOGE("UnityEngine.Object class not found");
+    return;
+  }
+  s_findObjectsMethod = g_il2cpp.GetMethod(objClass, "FindObjectsOfTypeAll", 1);
+  if (!s_findObjectsMethod) {
+    E_LOGE("Object.FindObjectsOfTypeAll(Type) method not found");
+    return;
+  }
+  s_il2cppReady = true;
+  E_LOGI("IL2CPP scene-scan ready: class=%p type=%p method=%p",
+         s_charActorClass, s_charActorTypeObj, s_findObjectsMethod);
+}
+
+// Calls UnityEngine.Object.FindObjectsOfTypeAll(typeof(CharacterActor)) and
+// caches the resulting actor pointers. Throttled to ~2 Hz.
+static void scanAllActors() {
+  tryInitIl2cppScan();
+  if (!s_il2cppReady)
+    return;
+  double t = nowMs();
+  // Scan IL2CPP à ~1 Hz (1000ms). FindObjectsOfTypeAll est coûteux sur le
+  // thread Unity → le limiter à 1 Hz élimine les freezes ESP.
+  // Les positions sont mises à jour en temps réel par le sniffer réseau
+  // (hook_PedDisplacement_Read) donc 1 Hz pour le scan d'acteurs suffit.
+  if (t - s_lastScanMs < 1000.0 && !s_scannedActors.empty())
+    return;
+  s_lastScanMs = t;
+
+  void *params[1] = {s_charActorTypeObj};
+  void *arr = g_il2cpp.Invoke(s_findObjectsMethod, nullptr, params);
+  if (!arr) {
+    E_LOGE("FindObjectsOfTypeAll returned null");
+    return;
+  }
+  uint32_t n = 0;
+  if (g_il2cpp.array_length) {
+    n = g_il2cpp.array_length(arr);
+  } else {
+    // Fallback to known IL2CPP array layout (size_t max_length at +0x18).
+    n = (uint32_t)(*reinterpret_cast<size_t *>(
+        reinterpret_cast<uint8_t *>(arr) + 0x18));
+  }
+  void **items = Il2CppArray_Items(arr);
+  std::vector<void *> actors;
+  actors.reserve(n);
+  for (uint32_t i = 0; i < n; i++) {
+    if (items[i])
+      actors.push_back(items[i]);
+  }
+  s_scannedActors = std::move(actors);
+  static int dbg = 0;
+  if ((dbg++ % 4) == 0) {
+    E_LOGI("Scene scan: %u CharacterActor instance(s)", n);
+  }
+}
+
+// === API ===
+void Esp_Init(uintptr_t libBase) {
+  s_libBase = libBase;
+
+  // Hooks VehicleOcclusionObject (culling) pour lister tous les véhicules
+  // actifs (V17 ECS bypass)
+  extern void hook_VehicleOcclusionObject_OnEnable(void *self);
+  extern void (*orig_VehicleOcclusionObject_OnEnable)(void *self);
+  extern void hook_VehicleOcclusionObject_OnDisable(void *self);
+  extern void (*orig_VehicleOcclusionObject_OnDisable)(void *self);
+
+  // Commented out to prevent SIGSEGV from outdated RVAs
+  /*
+  DobbyHook((void *)(s_libBase + 0x310E6E0),
+            (dobby_dummy_func_t)hook_VehicleOcclusionObject_OnEnable,
+            (dobby_dummy_func_t *)&orig_VehicleOcclusionObject_OnEnable);
+  DobbyHook((void *)(s_libBase + 0x310E830),
+            (dobby_dummy_func_t)hook_VehicleOcclusionObject_OnDisable,
+            (dobby_dummy_func_t *)&orig_VehicleOcclusionObject_OnDisable);
+  */
+  if (libBase != 0) {
+    fn_get_gameObject =
+        (Component_get_gameObject_t)(libBase + RVA_GetComponentString);
+    fn_get_name = (Object_get_name_t)(libBase + 0x4290B70);
+    fn_Camera_get_main = (Camera_get_main_t)(libBase + 0x42ACEC0);
+    fn_GetView = (GetMat_Injected_t)(libBase + 0x42ABD2C);
+    fn_GetProj = (GetMat_Injected_t)(libBase + 0x42ABE64);
+    fn_GetPixelW = (GetPixel_t)(libBase + 0x42AB848);
+    fn_GetPixelH = (GetPixel_t)(libBase + 0x42AB884);
+  }
+  E_LOGI("Esp_Init base=0x%lx get_main=%p getView=%p getProj=%p go=%p name=%p",
+         libBase, fn_Camera_get_main, fn_GetView, fn_GetProj, fn_get_gameObject,
+         fn_get_name);
+}
+
+void Esp_SetEnabled(bool en) {
+  s_enabled = en;
+  E_LOGI("ESP enabled=%d", (int)en);
+}
+
+bool Esp_IsEnabled() { return s_enabled; }
+
+void Esp_RegisterActor(void *ca) {
+  if (!ca || !s_enabled)
+    return;
+  pthread_mutex_lock(&s_mtx);
+  s_actorsThisFrame.push_back(ca);
+  pthread_mutex_unlock(&s_mtx);
+}
+
+// Identification ULTRA fiable du local : PreSimulationUpdate n'est appelé que
+// sur les CharacterActor `enabled` = local uniquement (remotes désactivés).
+// Cette fonction est appelée à chaque frame depuis hook_PreSimulationUpdate.
+void Esp_NotifyLocalActor(void *ca) {
+  if (!ca)
+    return;
+  pthread_mutex_lock(&s_mtx);
+  if (s_localActor != ca) {
+    E_LOGI("LocalActor identified via PreSimulationUpdate: %p (was %p)", ca,
+           s_localActor);
+    s_localActor = ca;
+  }
+  pthread_mutex_unlock(&s_mtx);
+}
+
+// === Read transform.position from a Unity Component ===
+typedef void *(*Component_get_transform_t)(void *self);
+static Component_get_transform_t fn_get_transform = nullptr;
+typedef void (*Transform_get_position_Injected_t)(void *self, V3 *out);
+static Transform_get_position_Injected_t fn_get_position = nullptr;
+
+typedef void *(*Transform_get_parent_t)(void *transform);
+static Transform_get_parent_t fn_get_parent = nullptr;
+
+typedef void *(*Transform_get_root_t)(void *transform);
+static Transform_get_root_t fn_get_root = nullptr;
+
+static void resolveLazy() {
+  if (fn_get_transform && fn_get_position)
+    return;
+  if (!s_libBase)
+    return;
+  if (RVA_Component_GetTransform != 0x0) {
+      fn_get_transform = (Component_get_transform_t)(s_libBase + RVA_Component_GetTransform);
+  }
+  // Transform.get_position_Injected @ RVA_Transform_GetPosition  ← READ world position
+  // Transform.set_position_Injected @ RVA_Transform_SetPosition  ← WRITE world position
+  if (RVA_Transform_GetPosition != 0x0) {
+      fn_get_position = (Transform_get_position_Injected_t)(s_libBase + RVA_Transform_GetPosition);
+  }
+}
+
+static bool readActorPosition(void *actor, V3 *out) {
+  resolveLazy();
+  if (!fn_get_transform || !fn_get_position || !actor)
+    return false;
+  void *tr = fn_get_transform(actor);
+  if (!tr)
+    return false;
+  V3 p = {0, 0, 0};
+  fn_get_position(tr, &p);
+  *out = p;
+  return true;
+}
+
+// === Update camera state by calling Unity Camera.main ===
+static void updateCameraState() {
+  if (!fn_Camera_get_main) {
+    s_camValid = false;
+    return;
+  }
+  void *cam = fn_Camera_get_main();
+  if (!cam) {
+    s_camValid = false;
+    return;
+  }
+  V3 cp;
+  if (!readActorPosition(cam, &cp)) {
+    s_camValid = false;
+    return;
+  }
+  s_camPos = cp;
+  s_camValid = true;
+}
+
+// === Frame tick: called from end of CharacterActor.PreSimulationUpdate hook
+// ===
+static double s_lastTickMs = 0;
+
+typedef void (*PhysicsActor_SetPosition_t)(void *self, float x, float y,
+                                           float z, float dx, float dy,
+                                           float dz);
+typedef void (*CharacterActor_SweepAndTeleport_t)(void *self, float x, float y,
+                                                  float z);
+typedef void (*Transform_set_position_Injected_t)(void *self, V3 *value);
+static PhysicsActor_SetPosition_t fn_set_position = nullptr;
+static CharacterActor_SweepAndTeleport_t fn_sweep_tp = nullptr;
+static Transform_set_position_Injected_t fn_transform_setpos = nullptr;
+
+static void resolveTeleport() {
+  if (fn_transform_setpos && fn_set_position && fn_sweep_tp)
+    return;
+  if (!s_libBase)
+    return;
+
+  if (RVA_Transform_SetPosition != 0x0) {
+
+      fn_transform_setpos =
+      (Transform_set_position_Injected_t)(s_libBase + RVA_Transform_SetPosition);
+
+  }
+  if (RVA_Transform_GetPosition != 0x0) {
+      fn_get_position = (Transform_get_position_Injected_t)(s_libBase + RVA_Transform_GetPosition);
+  }
+  if (RVA_Transform_GetParent != 0x0) {
+      fn_get_parent = (Transform_get_parent_t)(s_libBase + RVA_Transform_GetParent);
+  }
+  if (RVA_Transform_GetRoot != 0x0) {
+      fn_get_root = (Transform_get_root_t)(s_libBase + RVA_Transform_GetRoot);
+  }
+  // PhysicsActor.SetPosition causes a crash in FixedUpdate due to ABI mismatch.
+  // We rely entirely on SweepAndTeleport for both vehicle and player.
+  fn_set_position = nullptr;
+  if (RVA_SweepAndTeleport != 0x0) {
+      fn_sweep_tp = (CharacterActor_SweepAndTeleport_t)(s_libBase + RVA_SweepAndTeleport);
+  }
+}
+
+// Variables globales pour le teleport véhicule asynchrone
+void *g_PendingVehicleRoot = nullptr;
+V3 g_PendingVehicleTeleportPos = {0, 0, 0};
+bool g_PendingVehicleTeleport = false;
+
+static bool s_autoFollowCar = false;
+
+typedef int (*Transform_get_childCount_t)(void *self);
+typedef void *(*Transform_GetChild_t)(void *self, int index);
+typedef void *(*Component_GetComponentString_t)(void *self, void *typeString,
+                                                void *method);
+
+static Transform_get_childCount_t fn_get_childCount = nullptr;
+static Transform_GetChild_t fn_GetChild = nullptr;
+static Component_GetComponentString_t fn_GetComponentString = nullptr;
+
+void *FindRigidbodyRecursively(void *transform) {
+  if (!transform || !fn_GetComponentString || !fn_get_childCount ||
+      !fn_GetChild || !g_il2cpp.string_new)
+    return nullptr;
+
+  void *strObj = g_il2cpp.string_new("Rigidbody");
+  if (strObj) {
+    void *rb = fn_GetComponentString(transform, strObj, nullptr);
+    if (rb)
+      return rb;
+  }
+
+  int count = fn_get_childCount(transform);
+  for (int i = 0; i < count; i++) {
+    void *child = fn_GetChild(transform, i);
+    void *rb = FindRigidbodyRecursively(child);
+    if (rb)
+      return rb;
+  }
+  return nullptr;
+}
+
+void Esp_DirectVehicleTP(void *root, float x, float y, float z,
+                         bool playerInside = false) {
+  if (!root)
+    return;
+
+  V3 targetPos = {x, y, z};
+  E_LOGI("VehicleTP EXEC: root=%p target=(%.2f,%.2f,%.2f) playerInside=%d",
+         root, x, y, z, (int)playerInside);
+
+  if (!g_il2cpp.ready)
+    g_il2cpp.Init();
+
+  if (!fn_GetComponentString && s_libBase)
+    if (RVA_GetComponentString != 0x0) {
+        fn_GetComponentString =
+        (Component_GetComponentString_t)(s_libBase + RVA_GetComponentString);
+    }
+  if (!fn_get_childCount && s_libBase)
+    if (RVA_Transform_GetChildCount != 0x0) {
+        fn_get_childCount = (Transform_get_childCount_t)(s_libBase + RVA_Transform_GetChildCount);
+    }
+  if (!fn_GetChild && s_libBase)
+    if (RVA_Transform_GetChild != 0x0) {
+        fn_GetChild = (Transform_GetChild_t)(s_libBase + RVA_Transform_GetChild);
+    }
+
+  // 1) Teleport Transform (visual + collider basis)
+  typedef void (*Transform_set_position_Injected_t)(void *self, V3 *value);
+  static Transform_set_position_Injected_t fn_transform_setpos = nullptr;
+  if (!fn_transform_setpos && s_libBase)
+    if (RVA_Transform_SetPosition != 0x0) {
+        fn_transform_setpos =
+        (Transform_set_position_Injected_t)(s_libBase + RVA_Transform_SetPosition);
+    }
+
+  if (fn_transform_setpos) {
+    fn_transform_setpos(root, &targetPos);
+    E_LOGI("VehicleTP: Transform.set_position OK");
+  }
+
+  // 2) Teleport Rigidbody (Physics/Network) - crucial for server-side position
+  typedef void (*Rigidbody_set_position_Injected_t)(void *self, V3 *value);
+  static Rigidbody_set_position_Injected_t fn_rigid_setpos = nullptr;
+  if (!fn_rigid_setpos && s_libBase)
+    if (RVA_Rigidbody_SetPosition != 0x0) {
+        fn_rigid_setpos =
+(Rigidbody_set_position_Injected_t)(s_libBase + RVA_Rigidbody_SetPosition);
+    }
+
+  bool rbMoved = false;
+  void *rigid = FindRigidbodyRecursively(root);
+  if (rigid && fn_rigid_setpos) {
+    fn_rigid_setpos(rigid, &targetPos);
+    rbMoved = true;
+    E_LOGI("VehicleTP: Rigidbody.set_position OK (rigid=%p)", rigid);
+  } else {
+    E_LOGI("VehicleTP FAILED to find Rigidbody in hierarchy!");
+  }
+
+  // Force Unity Physics engine to update colliders to the new transform
+  typedef void (*Physics_SyncTransforms_t)();
+  static Physics_SyncTransforms_t fn_sync_transforms = nullptr;
+  if (!fn_sync_transforms && s_libBase)
+    if (RVA_Physics_SyncTransforms != 0x0) {
+        fn_sync_transforms = (Physics_SyncTransforms_t)(s_libBase + RVA_Physics_SyncTransforms);
+    }
+  if (fn_sync_transforms)
+    fn_sync_transforms();
+
+  // 3) Update local player internally so camera follows if parented
+  if (playerInside && s_localActor) {
+    void *actorTr = nullptr;
+    if (fn_get_transform)
+      actorTr = fn_get_transform(s_localActor);
+    if (actorTr && fn_transform_setpos) {
+      fn_transform_setpos(actorTr, &targetPos);
+      E_LOGI("VehicleTP: Local player transform moved directly (no sweep) to "
+             "match vehicle");
+    }
+  }
+
+  E_LOGI("VehicleTP DONE: root=%p rbMoved=%d final=(%.1f, %.1f, %.1f)", root,
+         (int)rbMoved, x, y, z);
+}
+
+void Esp_FrameTick() {
+  if (!s_enabled)
+    return;
+
+  resolveLazy();
+  double t = nowMs();
+  if (t - s_lastTickMs < 10.0)
+    return; // 100 Hz max throttle
+  s_lastTickMs = t;
+
+  updateCameraState();
+
+  // IMPORTANT: scanAllActors() (FindObjectsOfTypeAll) est INTERDIT sur le
+  // render thread (hook_FireOnPreCull) car c'est un appel IL2CPP lourd qui
+  // bloque le render thread → FREEZE complet du jeu.
+  // On utilise UNIQUEMENT les actors enregistrés via Esp_RegisterActor()
+  // depuis hook_PreSimulationUpdate (game thread, thread-safe).
+
+  pthread_mutex_lock(&s_mtx);
+  std::vector<void *> actors = s_actorsThisFrame;
+  // On garde aussi le snapshot précédent (scannedActors) pour les frames
+  // où PreSimulationUpdate n'a pas tourné (ex: joueur en voiture).
+  for (void *a : s_scannedActors) {
+    bool found = false;
+    for (void *b : actors)
+      if (a == b) { found = true; break; }
+    if (!found) actors.push_back(a);
+  }
+  s_actorsThisFrame.clear();
+  pthread_mutex_unlock(&s_mtx);
+
+  static int dbgCnt = 0;
+  if ((dbgCnt++ % 30) == 0) {
+    E_LOGI(
+        "FrameTick actors=%zu camValid=%d camPos=(%.1f,%.1f,%.1f) screen=%dx%d",
+        actors.size(), (int)s_camValid, s_camPos.x, s_camPos.y, s_camPos.z,
+        s_screenW, s_screenH);
+  }
+
+  if (!s_camValid || !fn_Camera_get_main || !fn_GetView || !fn_GetProj) {
+    return;
+  }
+  void *cam = fn_Camera_get_main();
+  if (!cam)
+    return;
+
+  // Capture View & Projection matrices for this frame.
+  M4 view{}, proj{};
+  fn_GetView(cam, &view);
+  fn_GetProj(cam, &proj);
+  int pixW = s_screenW, pixH = s_screenH;
+  if (fn_GetPixelW && fn_GetPixelH) {
+    int w = fn_GetPixelW(cam);
+    int h = fn_GetPixelH(cam);
+    if (w > 0 && h > 0) {
+      pixW = w;
+      pixH = h;
+    }
+  }
+  // Compose VP = proj * view (column-major).
+  auto mmul = [](const M4 &A, const M4 &B, M4 &R) {
+    for (int c = 0; c < 4; c++) {
+      for (int r = 0; r < 4; r++) {
+        float s = 0.f;
+        for (int k = 0; k < 4; k++) {
+          s += A.m[r + k * 4] * B.m[k + c * 4];
+        }
+        R.m[r + c * 4] = s;
+      }
+    }
+  };
+  M4 vp{};
+  mmul(proj, view, vp);
+
+  // Stocke la VP courante + dims écran pour Java (projection synchro vsync).
+  pthread_mutex_lock(&s_mtx);
+  memcpy(s_vp16, vp.m, sizeof(s_vp16));
+  s_camPixW = pixW;
+  s_camPixH = pixH;
+  s_vpValid = true;
+  pthread_mutex_unlock(&s_mtx);
+
+  auto worldToScreen = [&](const V3 &w, float &sx, float &sy,
+                           float &sd) -> bool {
+    // clip = VP * (w.xyz, 1)
+    float cx = vp.m[0] * w.x + vp.m[4] * w.y + vp.m[8] * w.z + vp.m[12];
+    float cy = vp.m[1] * w.x + vp.m[5] * w.y + vp.m[9] * w.z + vp.m[13];
+    float cw = vp.m[3] * w.x + vp.m[7] * w.y + vp.m[11] * w.z + vp.m[15];
+    if (cw <= 0.001f) {
+      sd = cw;
+      return false;
+    }
+    float ndcX = cx / cw;
+    float ndcY = cy / cw;
+    sx = (ndcX * 0.5f + 0.5f) * (float)pixW;
+    sy = (1.0f - (ndcY * 0.5f + 0.5f)) * (float)pixH; // flip Y -> top-left
+    sd = cw;
+    return true;
+  };
+
+  std::vector<EspPed> out;
+  out.reserve(actors.size());
+
+  // Find local: smallest distance to camera
+  int localIdx = -1;
+  float minDist = 1e9f;
+
+  // First pass: positions + distances
+  struct Tmp {
+    V3 pos;
+    float dist;
+  };
+  std::vector<Tmp> tmp(actors.size());
+  for (size_t i = 0; i < actors.size(); i++) {
+    V3 p;
+    if (!readActorPosition(actors[i], &p)) {
+      tmp[i].dist = 1e9f;
+      continue;
+    }
+    tmp[i].pos = p;
+    float dx = p.x - s_camPos.x;
+    float dy = p.y - s_camPos.y;
+    float dz = p.z - s_camPos.z;
+    tmp[i].dist = sqrtf(dx * dx + dy * dy + dz * dz);
+    if (tmp[i].dist < minDist) {
+      minDist = tmp[i].dist;
+      localIdx = (int)i;
+    }
+  }
+
+  // Second pass: build EspPed entries
+  for (size_t i = 0; i < actors.size(); i++) {
+    if (tmp[i].dist > 1e8f)
+      continue;
+    if ((int)i == localIdx)
+      continue; // SKIP LOCAL PLAYER!
+    EspPed e{};
+    e.distance = tmp[i].dist;
+    e.worldX = tmp[i].pos.x;
+    e.worldY = tmp[i].pos.y;
+    e.worldZ = tmp[i].pos.z;
+    e.isLocal = false;
+    e.pedType = ESP_PED_PLAYER;
+    e.health = -1.f;
+    e.name[0] = '\0';
+    e.actorPtr = actors[i];
+
+    // 1. Map ESP Actor to Network Entity by closest distance matching
+    int bestNetId = -1;
+    float bestSqDist = 10.0f; // tolerance of ~3 meters squared
+    for (auto &kv : g_PlayerPositions) {
+      float dx = kv.second.x - tmp[i].pos.x;
+      float dy = kv.second.y - tmp[i].pos.y;
+      float dz = kv.second.z - tmp[i].pos.z;
+      float sqDist = dx * dx + dy * dy + dz * dz;
+      if (sqDist < bestSqDist) {
+        bestSqDist = sqDist;
+        bestNetId = kv.first;
+      }
+    }
+
+    // 2. Fetch Sniffed Data
+    if (bestNetId != -1) {
+      if (g_PlayerNames.find(bestNetId) != g_PlayerNames.end()) {
+        strncpy(e.name, g_PlayerNames[bestNetId].c_str(), sizeof(e.name) - 1);
+        e.name[sizeof(e.name) - 1] = '\0';
+      }
+      if (g_PlayerHealth.find(bestNetId) != g_PlayerHealth.end()) {
+        e.health = g_PlayerHealth[bestNetId] /
+                   100.0f; // Scale to 0..1 for standard ESP health bars
+                           // (assuming max health is 100)
+      }
+    }
+
+    V3 feet = tmp[i].pos;
+    V3 head = v3(feet.x, feet.y + 1.8f, feet.z);
+    float fx, fy, fd, hx, hy, hd;
+    bool okF = worldToScreen(feet, fx, fy, fd);
+    bool okH = worldToScreen(head, hx, hy, hd);
+    e.screenX = fx;
+    e.screenY = fy;
+    e.screenHeadX = hx;
+    e.screenHeadY = hy;
+    e.onScreen = (okF && okH);
+    // Convert from camera pixel coords (pixW x pixH) to overlay coords
+    // (s_screenW x s_screenH)
+    if (pixW > 0 && pixH > 0 && (pixW != s_screenW || pixH != s_screenH)) {
+      float sx = (float)s_screenW / (float)pixW;
+      float sy = (float)s_screenH / (float)pixH;
+      e.screenX *= sx;
+      e.screenY *= sy;
+      e.screenHeadX *= sx;
+      e.screenHeadY *= sy;
+    }
+    out.push_back(e);
+  }
+
+  static int dbgOut = 0;
+  if ((dbgOut++ % 60) == 0) {
+    E_LOGI("Snapshot n=%zu actors_seen=%zu", out.size(), actors.size());
+  }
+  pthread_mutex_lock(&s_mtx);
+  s_snapshot = std::move(out);
+  if (localIdx >= 0 && localIdx < (int)actors.size() && minDist < 25.0f) {
+    if (s_localActor != actors[localIdx]) {
+      E_LOGI("Teleport-ready: s_localActor updated via scan = %p (was %p, "
+             "dist=%.1f)",
+             actors[localIdx], s_localActor, minDist);
+      s_localActor = actors[localIdx];
+    }
+  }
+  pthread_mutex_unlock(&s_mtx);
+
+  // === AUTO-FOLLOW : téléporte le local au-dessus de la cible aimbot ===
+  extern void Esp_TickAutoFollow();
+  Esp_TickAutoFollow();
+
+  // === AIM-LOCK : pivote la caméra locale vers la cible ===
+  extern void Esp_TickAimLock();
+  Esp_TickAimLock();
+}
+
+// === VEHICLE TRACKING (V17 ECS BYPASS) ===
+#include <algorithm>
+#include <vector>
+
+static std::vector<void *> s_Vehicles;
+
+void (*orig_VehicleOcclusionObject_OnEnable)(void *self);
+void hook_VehicleOcclusionObject_OnEnable(void *self) {
+  if (self) {
+    // LAZY INIT — do NOT use s_libBase at static declaration time (it equals 0
+    // before Esp_Init!)
+    typedef void *(*Component_get_transform_t)(void *);
+    typedef void *(*Transform_get_root_t)(void *, void *);
+    static Component_get_transform_t fn_gt = nullptr;
+    static Transform_get_root_t fn_gr = nullptr;
+    if (!fn_gt && s_libBase)
+      if (RVA_Component_GetTransform != 0x0) {
+          fn_gt = (Component_get_transform_t)(s_libBase + RVA_Component_GetTransform);
+      }
+    if (!fn_gr && s_libBase)
+      if (RVA_Transform_GetRoot != 0x0) {
+          fn_gr = (Transform_get_root_t)(s_libBase + RVA_Transform_GetRoot);
+      }
+
+    if (fn_gt && fn_gr) {
+      void *transform = fn_gt(self);
+      if (transform) {
+        void *root = fn_gr(transform, nullptr);
+        if (root) {
+          pthread_mutex_lock(&s_mtx);
+          if (std::find(s_Vehicles.begin(), s_Vehicles.end(), root) ==
+              s_Vehicles.end()) {
+            s_Vehicles.push_back(root);
+            E_LOGI("VehicleTrack: +root=%p (total=%zu)", root,
+                   s_Vehicles.size());
+          }
+          pthread_mutex_unlock(&s_mtx);
+        }
+      }
+    }
+  }
+  if (orig_VehicleOcclusionObject_OnEnable)
+    orig_VehicleOcclusionObject_OnEnable(self);
+}
+
+void (*orig_VehicleOcclusionObject_OnDisable)(void *self);
+void hook_VehicleOcclusionObject_OnDisable(void *self) {
+  if (self) {
+    typedef void *(*Component_get_transform_t)(void *);
+    typedef void *(*Transform_get_root_t)(void *, void *);
+    static Component_get_transform_t fn_gt = nullptr;
+    static Transform_get_root_t fn_gr = nullptr;
+    if (!fn_gt && s_libBase)
+      if (RVA_Component_GetTransform != 0x0) {
+          fn_gt = (Component_get_transform_t)(s_libBase + RVA_Component_GetTransform);
+      }
+    if (!fn_gr && s_libBase)
+      if (RVA_Transform_GetRoot != 0x0) {
+          fn_gr = (Transform_get_root_t)(s_libBase + RVA_Transform_GetRoot);
+      }
+
+    if (fn_gt && fn_gr) {
+      void *transform = fn_gt(self);
+      if (transform) {
+        void *root = fn_gr(transform, nullptr);
+        if (root) {
+          pthread_mutex_lock(&s_mtx);
+          s_Vehicles.erase(
+              std::remove(s_Vehicles.begin(), s_Vehicles.end(), root),
+              s_Vehicles.end());
+          pthread_mutex_unlock(&s_mtx);
+          E_LOGI("VehicleTrack: -root=%p (total=%zu)", root, s_Vehicles.size());
+        }
+      }
+    }
+  }
+  if (orig_VehicleOcclusionObject_OnDisable)
+    orig_VehicleOcclusionObject_OnDisable(self);
+}
+// ========================================
+
+// État auto-follow (toggle 181)
+static bool s_autoFollow = false;
+static double s_lastFollowMs = 0.0;
+static void *s_lockedFollowTarget = nullptr;
+
+static void Esp_SetAllVehiclesKinematic(bool kinematic) {
+  if (!g_il2cpp.ready)
+    return;
+  typedef void *(*Component_GetComponentString_t)(void *self, void *typeString,
+                                                  void *method);
+  static Component_GetComponentString_t fn_GetComponentString = nullptr;
+  if (!fn_GetComponentString && s_libBase)
+    if (RVA_GetComponentString != 0x0) {
+        fn_GetComponentString =
+        (Component_GetComponentString_t)(s_libBase + RVA_GetComponentString);
+    }
+
+  typedef void (*Rigidbody_set_isKinematic_t)(void *self, bool value);
+  static Rigidbody_set_isKinematic_t fn_rigid_kinematic = nullptr;
+  if (!fn_rigid_kinematic && s_libBase)
+    if (RVA_SetIsKinematic != 0x0) {
+        fn_rigid_kinematic = (Rigidbody_set_isKinematic_t)(s_libBase + RVA_SetIsKinematic);
+    }
+
+  if (g_il2cpp.string_new && fn_GetComponentString && fn_rigid_kinematic) {
+    void *strObj = g_il2cpp.string_new("Rigidbody");
+    if (strObj) {
+      pthread_mutex_lock(&s_mtx);
+      for (void *vroot : s_Vehicles) {
+        if (!vroot)
+          continue;
+        void *rigid = fn_GetComponentString(vroot, strObj, nullptr);
+        if (rigid) {
+          fn_rigid_kinematic(rigid, kinematic);
+        }
+      }
+      pthread_mutex_unlock(&s_mtx);
+    }
+  }
+}
+
+void Esp_SetAutoFollowCar(bool on) {
+  s_autoFollowCar = on;
+  s_lockedFollowTarget = nullptr; // Reset lock when toggling
+  if (!on) {
+    Esp_SetAllVehiclesKinematic(false);
+  }
+  E_LOGI("AutoFollowCar: %s (lock reset)", on ? "ON" : "OFF");
+}
+bool Esp_IsAutoFollowCarActive() { return s_autoFollowCar; }
+
+void Esp_SetAutoFollow(bool on) {
+  s_autoFollow = on;
+  s_lastFollowMs = 0.0;
+  s_lockedFollowTarget = nullptr; // Reset lock when toggling
+  E_LOGI("AutoFollow: %s (lock reset)", on ? "ON" : "OFF");
+}
+extern "C" void Esp_ResetAutoFollowLock() { s_lockedFollowTarget = nullptr; }
+bool Esp_IsAutoFollowActive() { return s_autoFollow; }
+void Esp_TickAutoFollow() {
+  if (!s_autoFollow && !s_autoFollowCar)
+    return;
+
+  // V158 : Téléportation à chaque frame (60Hz) pour contrer la gravité.
+  float tx = 0, ty = 0, tz = 0;
+  bool found = false;
+
+  // 1. Priorité absolue : cible verrouillée par pseudo (Sniffer Réseau)
+  if (Aimbot_IsTargetLocked()) {
+    tx = g_AimbotTargetPos[0];
+    ty = g_AimbotTargetPos[1];
+    tz = g_AimbotTargetPos[2];
+    found = true;
+  }
+  // 2. Sinon, cible IL2CPP verrouillée visuellement
+  else if (s_lockedFollowTarget != nullptr) {
+    pthread_mutex_lock(&s_mtx);
+    auto snap = s_snapshot;
+    pthread_mutex_unlock(&s_mtx);
+
+    for (const auto &p : snap) {
+      if (p.actorPtr == s_lockedFollowTarget) {
+        tx = p.worldX;
+        ty = p.worldY;
+        tz = p.worldZ;
+        found = true;
+        break;
+      }
+    }
+  }
+
+  // 3. Si pas de cible verrouillée, on cherche la meilleure au viseur
+  if (!found) {
+    // On cherche la meilleure cible actuelle (viseur)
+    void *newTarget = nullptr;
+    if (Esp_GetBestTargetWorld(&tx, &ty, &tz, true, &newTarget)) {
+      s_lockedFollowTarget = newTarget;
+      found = true;
+      E_LOGI("AutoFollow: Locked onto new target %p", s_lockedFollowTarget);
+    } else {
+      // Saccade fix: do not erase the locked target, just return!
+      // s_lockedFollowTarget = nullptr;
+      return;
+    }
+  }
+
+  if (!found)
+    return;
+
+  pthread_mutex_lock(&s_mtx);
+  void *actor = s_localActor;
+  pthread_mutex_unlock(&s_mtx);
+
+  V3 myPos = {0, 0, 0};
+  if (actor) {
+    readActorPosition(actor, &myPos);
+  }
+
+  static V3 s_lastAutoFollowPos = {0, 0, 0};
+
+  // Joystick Push Logic
+  bool pushed = false;
+  extern float g_joyX;
+  extern float g_joyY;
+  if (g_joyX != 0 || g_joyY != 0) {
+    pushed = true;
+  }
+
+  if (pushed) {
+    return;
+  }
+
+  extern float g_AutoFollowHeight;
+  extern float g_AutoFollowDistance;
+
+  float dx = myPos.x - tx;
+  float dz = myPos.z - tz;
+  float dist2D = sqrtf(dx * dx + dz * dz);
+  if (dist2D > 0.001f) {
+    dx /= dist2D;
+    dz /= dist2D;
+  } else {
+    dx = 1.0f;
+    dz = 0.0f;
+  }
+
+  myPos.x = tx + dx * g_AutoFollowDistance;
+  myPos.z = tz + dz * g_AutoFollowDistance;
+  myPos.y = ty + g_AutoFollowHeight;
+
+  Teleport_ToPosition(myPos.x, myPos.y, myPos.z);
+}
+
+bool Esp_GetBestTargetWorld(float *outX, float *outY, float *outZ,
+                            bool allowOffscreen, void **outActorPtr) {
+  if (!outX || !outY || !outZ)
+    return false;
+
+  extern bool Aimbot_IsTargetLocked();
+  if (Aimbot_IsTargetLocked()) {
+    extern float g_AimbotTargetPos[3];
+    *outX = g_AimbotTargetPos[0];
+    *outY = g_AimbotTargetPos[1];
+    *outZ = g_AimbotTargetPos[2];
+    if (outActorPtr)
+      *outActorPtr = nullptr;
+    return true;
+  }
+
+  pthread_mutex_lock(&s_mtx);
+  auto snap = s_snapshot;
+  pthread_mutex_unlock(&s_mtx);
+
+  float minDist = 999999.0f;
+  bool found = false;
+  for (const auto &p : snap) {
+    if (p.isLocal)
+      continue;
+    float dx = p.screenX - (s_screenW / 2.0f);
+    float dy = p.screenY - (s_screenH / 2.0f);
+    float dist = dx * dx + dy * dy;
+    if (dist < minDist) {
+      minDist = dist;
+      *outX = p.worldX;
+      *outY = p.worldY;
+      *outZ = p.worldZ;
+      if (outActorPtr)
+        *outActorPtr = p.actorPtr;
+      found = true;
+    }
+  }
+  return found;
+}
+
+void Esp_ForceScanLocal() {
+  scanAllActors();
+  if (s_localActor)
+    return;
+
+  if (!fn_Camera_get_main || !fn_get_transform || !fn_get_position)
+    return;
+  void *cam = fn_Camera_get_main();
+  if (!cam)
+    return;
+  void *camTr = fn_get_transform(cam);
+  if (!camTr)
+    return;
+  V3 camPos;
+  fn_get_position(camTr, &camPos);
+
+  pthread_mutex_lock(&s_mtx);
+  void *bestActor = nullptr;
+  float bestDist = 99999.0f;
+
+  for (void *actor : s_scannedActors) {
+    void *tr = fn_get_transform(actor);
+    if (!tr)
+      continue;
+    V3 pos;
+    fn_get_position(tr, &pos);
+    float dx = pos.x - camPos.x;
+    float dy = pos.y - camPos.y;
+    float dz = pos.z - camPos.z;
+    float dist = dx * dx + dy * dy + dz * dz;
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestActor = actor;
+    }
+  }
+
+  // If an actor is extremely close to the main camera, it is very likely the
+  // local player.
+  if (bestDist < 10.0f && bestActor) {
+    s_localActor = bestActor;
+    E_LOGI("Esp_ForceScanLocal: LocalActor fallback identified by Camera "
+           "distance! %p (dist=%.2f)",
+           bestActor, bestDist);
+  }
+  pthread_mutex_unlock(&s_mtx);
+}
+
+std::vector<EspPed> Esp_GetSnapshot() {
+  pthread_mutex_lock(&s_mtx);
+  auto snap = s_snapshot;
+  pthread_mutex_unlock(&s_mtx);
+  return snap;
+}
+
+void Esp_TargetVehicle() {}
+
+void Esp_TeleportTargetVehicle(float x, float y, float z) {
+  if (!g_PendingVehicleRoot)
+    return;
+
+  typedef void (*Transform_setpos_t)(void *, V3 *);
+  static Transform_setpos_t fn_setpos = nullptr;
+  if (RVA_Transform_SetPosition != 0x0) {
+      fn_setpos = (Transform_setpos_t)(s_libBase + RVA_Transform_SetPosition);
+  }
+
+  if (fn_setpos) {
+    V3 pos = {x, y, z};
+    fn_setpos(g_PendingVehicleRoot, &pos);
+    E_LOGI("Esp_TeleportTargetVehicle: TP %p to %f %f %f", g_PendingVehicleRoot,
+           x, y, z);
+  }
+}
+
+// Missing ESP Setters and Getters
+void Esp_SetDotMode(bool enable) { s_dotMode = enable; }
+bool Esp_IsDotMode() { return s_dotMode; }
+void Esp_SetLineEnabled(bool enable) { s_lineEnabled = enable; }
+bool Esp_IsLineEnabled() { return s_lineEnabled; }
+void Esp_SetBoxEnabled(bool enable) { s_boxEnabled = enable; }
+bool Esp_IsBoxEnabled() { return s_boxEnabled; }
+void Esp_SetDistanceEnabled(bool enable) { s_distanceEnabled = enable; }
+bool Esp_IsDistanceEnabled() { return s_distanceEnabled; }
+void Esp_SetMarkerEnabled(bool enable) { s_markerEnabled = enable; }
+bool Esp_IsMarkerEnabled() { return s_markerEnabled; }
+void Esp_SetDynamicColor(bool enable) { s_dynamicColor = enable; }
+bool Esp_IsDynamicColor() { return s_dynamicColor; }
+
+static bool s_crosshair = false;
+static bool s_crosshairCircle = false;
+static int s_crosshairRadius = 10;
+
+void Esp_SetCrosshairEnabled(bool en) { s_crosshair = en; }
+bool Esp_IsCrosshairEnabled() { return s_crosshair; }
+void Esp_SetCrosshairCircleEnabled(bool en) { s_crosshairCircle = en; }
+bool Esp_IsCrosshairCircleEnabled() { return s_crosshairCircle; }
+void Esp_SetCrosshairCircleRadius(int r) { s_crosshairRadius = r; }
+int Esp_GetCrosshairCircleRadius() { return s_crosshairRadius; }
+void Esp_SetHealthEnabled(bool en) { s_healthEnabled = en; }
+bool Esp_IsHealthEnabled() { return s_healthEnabled; }
+
+static int s_teleportSpamFrames = 0;
+static V3 s_teleportSpamPos;
+
+// Real Teleport_ToPosition implementation
+bool Teleport_ToPosition(float x, float y, float z, bool ignoreCooldown) {
+  resolveLazy();
+  resolveTeleport();
+  void *actor = s_localActor;
+  if (!actor) {
+    E_LOGI("Teleport_ToPosition: s_localActor is null, cannot teleport");
+    return false;
+  }
+  V3 pos = {x, y, z};
+
+  // Get the transform and root
+  void *actorTr = nullptr;
+  if (fn_get_transform)
+    actorTr = fn_get_transform(actor);
+
+  void *rootTr = actorTr;
+  if (actorTr && fn_get_root) {
+    rootTr = fn_get_root(actorTr);
+  }
+
+  if (rootTr && rootTr != actorTr) {
+    Esp_DirectVehicleTP(rootTr, x, y, z, true);
+    E_LOGI(
+        "Teleport_ToPosition: Esp_DirectVehicleTP called for vehicle root=%p",
+        rootTr);
+  } else {
+    extern bool g_NoClipEnabled;
+    if (g_NoClipEnabled || Esp_IsAutoFollowActive()) {
+      Esp_DirectVehicleTP(rootTr, x, y, z, false);
+      E_LOGI("Teleport_ToPosition: Player TP via DirectTransform "
+             "(AutoFollow/NoClip) OK");
+    } else {
+      // Map TP or Slot TP on foot: move transform directly first to bypass
+      // obstacles, then call SweepAndTeleport to update the character
+      // controller's internal position.
+      Esp_DirectVehicleTP(rootTr, x, y, z, false);
+      if (fn_sweep_tp) {
+        fn_sweep_tp(actor, x, y, z);
+      }
+      E_LOGI("Teleport_ToPosition: Player TP via Direct + Sweep OK");
+    }
+  }
+
+  return true;
+}
+void Teleport_LoadSlots() {}
+bool Teleport_GoSlot(int slot) { return false; }
+bool Esp_IsLocalActor(void *actor) { return actor == s_localActor; }
+void *Esp_MakeIl2cppString(const char *str) {
+  if (!str || !g_il2cpp.ready)
+    return nullptr;
+  if (!g_il2cpp.Init())
+    return nullptr;
+  return g_il2cpp.string_new(str);
+}
+void Esp_TickAimLock() {
+  // Auto-spam removed
+}
+bool Esp_TeleportToNextGraffiti() { return false; }
+void Esp_AutoMapGraffiti(bool enable) {}
+
+void *Esp_GetLocalTransform() {
+  if (!s_localActor)
+    return nullptr;
+  if (fn_get_transform)
+    return fn_get_transform(s_localActor);
+  return nullptr;
+}
+
+extern "C" {
+void Java_com_android_support_EspBridge_setScreenSize(JNIEnv *env, jclass,
+                                                      jint w, jint h) {
+  s_camPixW = w;
+  s_camPixH = h;
+}
+
+void Java_com_android_support_EspBridge_setEnabled(JNIEnv *env, jclass,
+                                                   jboolean en) {
+  s_enabled = en;
+}
+
+jboolean Java_com_android_support_EspBridge_isEnabled(JNIEnv *env, jclass) {
+  return s_enabled;
+}
+
+jfloatArray Java_com_android_support_EspBridge_getData(JNIEnv *env, jclass) {
+  pthread_mutex_lock(&s_mtx);
+  auto snap = s_snapshot;
+  pthread_mutex_unlock(&s_mtx);
+
+  int count = snap.size();
+  if (count == 0) {
+    jfloatArray ret = env->NewFloatArray(1);
+    float z[1] = {0.0f};
+    env->SetFloatArrayRegion(ret, 0, 1, z);
+    return ret;
+  }
+
+  int stride = 5; // STRIDE from Java EspBridge (worldX, worldY, worldZ, distance, isLocal)
+  int arrSize = 1 + count * stride;
+  float *tmp = new float[arrSize];
+  tmp[0] = (float)count;
+
+  for (int i = 0; i < count; i++) {
+    int o = 1 + i * stride;
+    tmp[o + 0] = snap[i].worldX;
+    tmp[o + 1] = snap[i].worldY;
+    tmp[o + 2] = snap[i].worldZ;
+    tmp[o + 3] = snap[i].distance;
+    tmp[o + 4] = snap[i].isLocal ? 1.0f : 0.0f;
+  }
+
+  jfloatArray ret = env->NewFloatArray(arrSize);
+  env->SetFloatArrayRegion(ret, 0, arrSize, tmp);
+  delete[] tmp;
+  return ret;
+}
+
+jfloatArray Java_com_android_support_EspBridge_getViewProjection(JNIEnv *env,
+                                                                 jclass) {
+  jfloatArray ret = env->NewFloatArray(18);
+  float tmp[18];
+  bool ok = false;
+  pthread_mutex_lock(&s_mtx);
+  if (s_vpValid) {
+    memcpy(tmp, s_vp16, 16 * sizeof(float));
+    tmp[16] = (float)s_camPixW;
+    tmp[17] = (float)s_camPixH;
+    ok = true;
+  }
+  pthread_mutex_unlock(&s_mtx);
+
+  if (ok) {
+    env->SetFloatArrayRegion(ret, 0, 18, tmp);
+  }
+  return ret;
+}
+
+jobjectArray Java_com_android_support_EspBridge_getPedNames(JNIEnv *env,
+                                                            jclass) {
+  pthread_mutex_lock(&s_mtx);
+  auto snap = s_snapshot;
+  pthread_mutex_unlock(&s_mtx);
+
+  jclass stringClass = env->FindClass("java/lang/String");
+  int count = snap.size();
+  if (count == 0) {
+    return env->NewObjectArray(0, stringClass, env->NewStringUTF(""));
+  }
+  jobjectArray ret =
+      env->NewObjectArray(count, stringClass, env->NewStringUTF(""));
+
+  for (int i = 0; i < count; i++) {
+    env->SetObjectArrayElement(ret, i, env->NewStringUTF(snap[i].name));
+  }
+  return ret;
+}
+
+jboolean Java_com_android_support_EspBridge_isDotMode(JNIEnv *env, jclass) {
+  return s_dotMode;
+}
+jboolean Java_com_android_support_EspBridge_isLineEnabled(JNIEnv *, jclass) {
+  return s_lineEnabled;
+}
+jboolean Java_com_android_support_EspBridge_isBoxEnabled(JNIEnv *, jclass) {
+  return s_boxEnabled;
+}
+jboolean Java_com_android_support_EspBridge_isDistanceEnabled(JNIEnv *,
+                                                              jclass) {
+  return s_distanceEnabled;
+}
+jboolean Java_com_android_support_EspBridge_isMarkerEnabled(JNIEnv *, jclass) {
+  return s_markerEnabled;
+}
+jboolean Java_com_android_support_EspBridge_isDynamicColor(JNIEnv *, jclass) {
+  return s_dynamicColor;
+}
+jboolean Java_com_android_support_EspBridge_isCrosshairEnabled(JNIEnv *, jclass) {
+  return s_crosshairEnabled;
+}
+jboolean Java_com_android_support_EspBridge_isCrosshairCircleEnabled(JNIEnv *, jclass) {
+  return s_crosshairCircleEnabled;
+}
+jint Java_com_android_support_EspBridge_getCrosshairCircleRadius(JNIEnv *, jclass) {
+  return s_crosshairCircleRadius;
+}
+jboolean Java_com_android_support_EspBridge_isHealthEnabled(JNIEnv *, jclass) {
+  return s_healthEnabled;
+}
+
+extern "C" void Esp_TPCarToTarget() {
+  float tx = 0, ty = 0, tz = 0;
+  if (Esp_GetBestTargetWorld(&tx, &ty, &tz)) {
+    pthread_mutex_lock(&s_mtx);
+    void *actor = s_localActor;
+    pthread_mutex_unlock(&s_mtx);
+
+    if (!actor) {
+      E_LOGI("Esp_TPCarToTarget: s_localActor is null");
+      return;
+    }
+
+    void *actorTr = nullptr;
+    if (fn_get_transform)
+      actorTr = fn_get_transform(actor);
+
+    void *rootTr = actorTr;
+    if (actorTr && fn_get_root) {
+      rootTr = fn_get_root(actorTr);
+    }
+
+    if (rootTr && rootTr != actorTr) {
+      // Player is in a vehicle - teleport the vehicle
+      Esp_DirectVehicleTP(rootTr, tx, ty + 1.5f, tz, false);
+      E_LOGI("Esp_TPCarToTarget: Vehicle TP to target (%.1f, %.1f, %.1f)", tx, ty, tz);
+    } else {
+      // Player is not in a vehicle - teleport the player
+      bool ok = Teleport_ToPosition(tx, ty + 1.5f, tz, false);
+      E_LOGI("Esp_TPCarToTarget: Player TP to target (%.1f, %.1f, %.1f) ok=%d", tx, ty, tz, (int)ok);
+    }
+  } else {
+    E_LOGI("Esp_TPCarToTarget: No target found");
+  }
+}
+}

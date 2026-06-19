@@ -1,0 +1,52 @@
+// Aimbot module - OneState RP
+#pragma once
+#include <stdint.h>
+
+void Aimbot_SetEnabled(bool en);
+bool Aimbot_IsEnabled();
+void Aimbot_InstallHooks(uintptr_t libBase);
+void Aimbot_SetWallBang(bool en);
+
+// Timestamp du dernier tir (ms) — utilisé par Smart God Mode dans Main.cpp
+long long Aimbot_GetLastFireTime();
+
+// Lookup pseudo -> id aimbot (rempli par le sniffer NicknameTextDatagram)
+void Aimbot_SetTargetByName(const char* name);
+int  Aimbot_GetTargetId();
+
+// Accès au sniffer depuis Menu.cpp
+const char* Aimbot_GetPlayerName(int id);
+
+// Retourne true si un pseudo est verrouille ET sa position reseau est recente (< 5s)
+// → sert au feedback "cible localisee"
+bool Aimbot_IsTargetLocked();
+
+// Retourne le HitsCount du dernier paquet d'attaque envoye au serveur
+// 0 = rate, >0 = cible atteinte
+int  Aimbot_GetLastHitCount();
+
+// Variables globales partagees avec Esp.cpp pour le suivi pseudo-based
+extern int   g_AimbotTargetId;
+extern float g_AimbotTargetPos[3];
+
+// Nouveaux paramètres Aimbot (V17)
+extern int   g_BonePriority;         // 0=Torso, 1=Neck, 2=Head, 3=Pelvis
+extern bool  g_VisibilityCheck;      // Vérifie les obstacles (Raycast)
+extern float g_AimLockSmoothness;    // 0 = instant, >0 = smooth speed
+
+
+#include <map>
+#include <string>
+
+#ifndef V3_STRUCT_DEFINED
+#define V3_STRUCT_DEFINED
+struct V3 { float x,y,z; };
+#endif
+
+#include <pthread.h>
+extern pthread_mutex_t g_SnifferMtx;
+extern std::map<int, std::string> g_PlayerNames;
+extern std::map<int, float> g_PlayerHealth;
+extern std::map<int, float> g_PlayerArmor;
+extern std::map<int, V3> g_PlayerPositions;
+
