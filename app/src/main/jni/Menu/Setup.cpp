@@ -113,6 +113,29 @@ int RegisterEspBridge(JNIEnv *env) {
     return JNI_OK;
 }
 
+extern "C" {
+    jboolean Java_com_chillbase_games_ChillbaseActivity_nativeTouch(JNIEnv *env, jclass clazz, jint action, jfloat x, jfloat y, jfloat viewW, jfloat viewH);
+}
+
+int RegisterChillbaseActivity(JNIEnv *env) {
+    JNINativeMethod methods[] = {
+            {OBFUSCATE("nativeTouch"), OBFUSCATE("(IFFFF)Z"), reinterpret_cast<void *>(Java_com_chillbase_games_ChillbaseActivity_nativeTouch)},
+    };
+    jclass clazz = env->FindClass(OBFUSCATE("com/chillbase/games/ChillbaseActivity"));
+    if (!clazz) {
+        env->ExceptionClear();
+        LOGE("JNI: Class ChillbaseActivity not found!");
+        return JNI_ERR;
+    }
+    if (env->RegisterNatives(clazz, methods, sizeof(methods) / sizeof(methods[0])) != 0) {
+        env->ExceptionClear();
+        LOGE("JNI: RegisterNatives for ChillbaseActivity failed!");
+        return JNI_ERR;
+    }
+    LOGI("JNI: ChillbaseActivity registered successfully");
+    return JNI_OK;
+}
+
 // Stocke le pointeur JavaVM globalement pour les modules qui doivent attacher
 // un thread non-Java (Hwid.cpp). JNI_GetCreatedJavaVMs n'est PAS exporté par
 // les libs NDK Android, on se sert donc de cette variable.
@@ -134,6 +157,7 @@ Payload_Init(JNIEnv *env, jobject ctx) {
     // On n'enregistre plus Main (CheckOverlayPermission) car c'est le Loader qui a reçu cet appel !
     // RegisterMain(env); 
     RegisterEspBridge(env);
+    RegisterChillbaseActivity(env);
     
     jclass localClass = env->FindClass("com/android/support/DialogHelper");
     if (localClass != nullptr) {
@@ -168,6 +192,7 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     RegisterPreferences(env);
     RegisterMain(env);
     RegisterEspBridge(env);
+    RegisterChillbaseActivity(env);
 
     jclass localClass = env->FindClass("com/android/support/DialogHelper");
     if (localClass != nullptr) {
