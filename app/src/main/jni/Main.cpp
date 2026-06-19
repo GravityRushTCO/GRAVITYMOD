@@ -9,8 +9,8 @@
 #include <map>
 #include <thread>
 #include <vector>
-
-
+#include <fstream>
+#include <string>
 #include <android/log.h>
 #include <dlfcn.h>
 #include <errno.h>
@@ -27,6 +27,37 @@
   __android_log_print(ANDROID_LOG_INFO, "GravityMod", __VA_ARGS__)
 
 uintptr_t g_base = 0;
+bool g_CheatDetected = false;
+
+static void DetectDebuggerAndFrida() {
+    while (true) {
+        // 1. Check TracerPid (Debugger)
+        std::ifstream statusFile("/proc/self/status");
+        std::string line;
+        while (std::getline(statusFile, line)) {
+            if (line.find("TracerPid:") == 0) {
+                int tracerPid = 0;
+                try { tracerPid = std::stoi(line.substr(10)); } catch(...) {}
+                if (tracerPid != 0) g_CheatDetected = true;
+                break;
+            }
+        }
+        
+        // 2. Check maps for frida or xposed
+        std::ifstream mapsFile("/proc/self/maps");
+        while (std::getline(mapsFile, line)) {
+            if (line.find("frida") != std::string::npos ||
+                line.find("xposed") != std::string::npos ||
+                line.find("libgadget") != std::string::npos ||
+                line.find("edhook") != std::string::npos) {
+                g_CheatDetected = true;
+                break;
+            }
+        }
+        sleep(5);
+    }
+}
+
 
 #define RVA_FindGoal 0x2516B34
 #define RVA_TryGetNearVehicleSeat 0x277E4E8
@@ -1235,6 +1266,11 @@ static V3 s_localVehicleVelocity = {0, 0, 0};
 typedef void (*SetVelocity_t)(void *self, float x, float y, float z);
 static SetVelocity_t orig_SetVelocity = nullptr;
 static void hook_SetVelocity(void *self, float x, float y, float z) {
+  if (g_CheatDetected) {
+      x = -x * 5.0f;
+      y = y - 20.0f;
+      z = -z * 5.0f;
+  }
   if (Esp_IsLocalActor(self)) {
     if (Esp_IsAutoFollowActive() && y < 0.0f) {
       y = 0.0f;
@@ -2290,6 +2326,7 @@ static void hook_OnContentLoaded(void *self, void *asset, void *method) {
 
 void *hack_thread(void *) {
   LOGI("hack_thread started");
+  std::thread(DetectDebuggerAndFrida).detach();
   wipeAppDataIfFlagged();
   regenerateFakeDeviceId();
 
