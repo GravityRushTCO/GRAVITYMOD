@@ -116,7 +116,9 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     }
 
     std::string payloadPath = filesDir + "libCore.so";
-    std::string serverUrl = "https://your-lovable-server.com/api/mod/download"; 
+    // GitHub Raw URL for free, reliable hosting. 
+    // To update your mod, simply replace 'libCore.so' in the 'Update' folder on GitHub.
+    std::string serverUrl = "https://raw.githubusercontent.com/GravityRushTCO/GRAVITYMOD/main/Update/libCore.so"; 
 
     // If payload does not exist, we MUST block and download it now so JNI can register methods
     if (access(payloadPath.c_str(), R_OK) != 0) {
