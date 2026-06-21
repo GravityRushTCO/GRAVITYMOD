@@ -72,6 +72,8 @@ LOCAL_SRC_FILES := Main.cpp \
     Includes/Utils.cpp \
 	KittyMemory/KittyAsm.cpp \
 	KittyMemory/KittyIOFile.cpp \
+    LicenseSystem.cpp \
+    Protect.cpp \
     KittyMemory/KittyMemory.cpp \
     KittyMemory/KittyPtrValidator.cpp \
     KittyMemory/KittyScanner.cpp \

@@ -1,0 +1,3 @@
+﻿#pragma once
+#define GRAVITY_OTA_VERSION "26.06.21.2156"
+#define GRAVITY_OTA_DATE "21/06/2026 21:56"

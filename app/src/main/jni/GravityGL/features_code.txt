@@ -1,0 +1,324 @@
+if (physicalTab == 0) {
+      CenterText(GetGradientColorU32(0.3f), "AIMBOT & ASSISTANCE");
+      ImGui::Dummy(ImVec2(0, 5));
+      static bool aimEnabled = false;
+      if (g_RemoteTogglesPending[120]) { aimEnabled = g_RemoteToggles[120]; g_RemoteTogglesPending[120] = false; TriggerChange(120, aimEnabled); }
+      if (IsFeatureVisible(120)) {
+        if (CustomCheckbox("Activer Aimbot", &aimEnabled))
+          TriggerChange(120, aimEnabled);
+      } else if (aimEnabled) {
+        aimEnabled = false;
+        TriggerChange(120, false);
+      }
+
+      static bool wallBang = false;
+      if (g_RemoteTogglesPending[132]) { wallBang = g_RemoteToggles[132]; g_RemoteTogglesPending[132] = false; TriggerChange(132, wallBang); }
+      if (IsFeatureVisible(132)) {
+        if (CustomCheckbox("Tirer a travers les murs", &wallBang))
+          TriggerChange(132, wallBang);
+      } else if (wallBang) {
+        wallBang = false;
+        TriggerChange(132, false);
+      }
+
+      static bool visCheck = false;
+      if (g_RemoteTogglesPending[184]) { visCheck = g_RemoteToggles[184]; g_RemoteTogglesPending[184] = false; TriggerChange(184, visCheck); }
+      if (IsFeatureVisible(184)) {
+        if (CustomCheckbox("Verification de visibilite", &visCheck))
+          TriggerChange(184, visCheck);
+      } else if (visCheck) {
+        visCheck = false;
+        TriggerChange(184, false);
+      }
+
+      static float aimSmooth = 2.0f;
+      if (g_RemoteSlidersPending[185]) { aimSmooth = g_RemoteSliders[185]; g_RemoteSlidersPending[185] = false; TriggerChange(185, false, (int)aimSmooth); }
+      if (IsFeatureVisible(185)) {
+        if (CustomSliderFloat("Lissage de visee", &aimSmooth, 0.0f, 10.0f,
+                              "%.1f", "Aim Smooth", "x"))
+          TriggerChange(185, false, (int)aimSmooth);
+      }
+
+      static int bonePriority = 0;
+      const char *boneNames[] = {"Torse", "Cou", "Tete", "Bassin"};
+      if (IsFeatureVisible(183)) {
+        if (CustomCombo("Os cible", &bonePriority, boneNames, 4, "Target Bone"))
+          TriggerChange(183, false, bonePriority);
+      }
+
+      static bool noReload = false;
+      if (g_RemoteTogglesPending[205]) { noReload = g_RemoteToggles[205]; g_RemoteTogglesPending[205] = false; TriggerChange(205, noReload); }
+      if (IsFeatureVisible(205)) {
+        if (CustomCheckbox("Pas de rechargement", &noReload))
+          TriggerChange(205, noReload);
+      } else if (noReload) {
+        noReload = false;
+        TriggerChange(205, false);
+      }
+
+      ImGui::Dummy(ImVec2(0, 5));
+      static bool autoFollow = false;
+      if (g_RemoteTogglesPending[300]) { autoFollow = g_RemoteToggles[300]; g_RemoteTogglesPending[300] = false; TriggerChange(300, autoFollow); }
+      if (IsFeatureVisible(300)) {
+        if (CustomCheckbox("Suivre Joueur Auto", &autoFollow))
+          TriggerChange(300, autoFollow);
+      } else if (autoFollow) {
+        autoFollow = false;
+        TriggerChange(300, false);
+      }
+
+      static bool autoFollowCar = false;
+      if (g_RemoteTogglesPending[301]) { autoFollowCar = g_RemoteToggles[301]; g_RemoteTogglesPending[301] = false; TriggerChange(301, autoFollowCar); }
+      if (IsFeatureVisible(301)) {
+        if (CustomCheckbox("Suivre Voiture Auto", &autoFollowCar))
+          TriggerChange(301, autoFollowCar);
+      } else if (autoFollowCar) {
+        autoFollowCar = false;
+        TriggerChange(301, false);
+      }
+
+      static float followDist = 0.0f;
+      if (g_RemoteSlidersPending[302]) { followDist = g_RemoteSliders[302]; g_RemoteSlidersPending[302] = false; TriggerChange(302, false, (int)followDist); }
+      if (IsFeatureVisible(302)) {
+        if (CustomSliderFloat("Distance de suivi", &followDist, 0.0f, 15.0f,
+                              "%.1fm", "Distance", "v"))
+          TriggerChange(302, false, (int)followDist);
+      }
+    } else if (physicalTab == 1) {
+      CenterText(GetGradientColorU32(0.5f), "ESP & VISUELS");
+      ImGui::Dummy(ImVec2(0, 5));
+      static bool espEnabled = false;
+      if (g_RemoteTogglesPending[121]) { espEnabled = g_RemoteToggles[121]; g_RemoteTogglesPending[121] = false; TriggerChange(121, espEnabled); }
+      if (IsFeatureVisible(121)) {
+        if (CustomCheckbox("Activer ESP", &espEnabled))
+          TriggerChange(121, espEnabled);
+      } else if (espEnabled) {
+        espEnabled = false;
+        TriggerChange(121, false);
+      }
+
+      static bool espLine = false;
+      if (g_RemoteTogglesPending[194]) { espLine = g_RemoteToggles[194]; g_RemoteTogglesPending[194] = false; TriggerChange(194, espLine); }
+      if (IsFeatureVisible(194)) {
+        if (CustomCheckbox("Lignes", &espLine))
+          TriggerChange(194, espLine);
+      } else if (espLine) {
+        espLine = false;
+        TriggerChange(194, false);
+      }
+
+      static bool espBox = false;
+      if (g_RemoteTogglesPending[195]) { espBox = g_RemoteToggles[195]; g_RemoteTogglesPending[195] = false; TriggerChange(195, espBox); }
+      if (IsFeatureVisible(195)) {
+        if (CustomCheckbox("Boites", &espBox))
+          TriggerChange(195, espBox);
+      } else if (espBox) {
+        espBox = false;
+        TriggerChange(195, false);
+      }
+
+      static bool espDistance = false;
+      if (g_RemoteTogglesPending[196]) { espDistance = g_RemoteToggles[196]; g_RemoteTogglesPending[196] = false; TriggerChange(196, espDistance); }
+      if (IsFeatureVisible(196)) {
+        if (CustomCheckbox("Distance", &espDistance))
+          TriggerChange(196, espDistance);
+      } else if (espDistance) {
+        espDistance = false;
+        TriggerChange(196, false);
+      }
+
+      static bool espHealth = false;
+      if (g_RemoteTogglesPending[241]) { espHealth = g_RemoteToggles[241]; g_RemoteTogglesPending[241] = false; TriggerChange(241, espHealth); }
+      if (IsFeatureVisible(241)) {
+        if (CustomCheckbox("Sante", &espHealth))
+          TriggerChange(241, espHealth);
+      } else if (espHealth) {
+        espHealth = false;
+        TriggerChange(241, false);
+      }
+
+      static bool espName = false;
+      if (g_RemoteTogglesPending[197]) { espName = g_RemoteToggles[197]; g_RemoteTogglesPending[197] = false; TriggerChange(197, espName); }
+      if (IsFeatureVisible(197)) {
+        if (CustomCheckbox("Noms", &espName))
+          TriggerChange(197, espName);
+      } else if (espName) {
+        espName = false;
+        TriggerChange(197, false);
+      }
+
+      static bool espSkeleton = false;
+      if (g_RemoteTogglesPending[199]) { espSkeleton = g_RemoteToggles[199]; g_RemoteTogglesPending[199] = false; TriggerChange(199, espSkeleton); }
+      if (IsFeatureVisible(199)) {
+        if (CustomCheckbox("Squelette", &espSkeleton)) {
+          Esp_SetSkeletonEnabled(espSkeleton);
+          TriggerChange(199, espSkeleton);
+        }
+      } else if (espSkeleton) {
+        espSkeleton = false;
+        Esp_SetSkeletonEnabled(false);
+        TriggerChange(199, false);
+      }
+
+      bool crosshair = Esp_IsCrosshairEnabled();
+      if (IsFeatureVisible(240)) {
+        if (CustomCheckbox("Viseur (Crosshair)", &crosshair)) {
+          Esp_SetCrosshairEnabled(crosshair);
+          TriggerChange(240, crosshair);
+        }
+      } else if (crosshair) {
+        Esp_SetCrosshairEnabled(false);
+        TriggerChange(240, false);
+      }
+
+      static float fovCamera = 60.0f;
+      if (g_RemoteSlidersPending[193]) { fovCamera = g_RemoteSliders[193]; g_RemoteSlidersPending[193] = false; TriggerChange(193, false, (int)fovCamera); }
+      if (IsFeatureVisible(193)) {
+        if (CustomSliderFloat("Champ de vision", &fovCamera, 30.0f, 150.0f,
+                              "%.0f", "Camera FOV", "x"))
+          TriggerChange(193, false, (int)fovCamera);
+      }
+    } else if (physicalTab == 2) {
+      static bool noClip = false;
+      if (g_RemoteTogglesPending[109]) { noClip = g_RemoteToggles[109]; g_RemoteTogglesPending[109] = false; TriggerChange(109, noClip); }
+      if (IsFeatureVisible(109)) {
+        if (CustomCheckbox("NoClip / Vol Murs", &noClip))
+          TriggerChange(109, noClip);
+      } else if (noClip) {
+        noClip = false;
+        TriggerChange(109, false);
+      }
+
+      static bool flyMode = false;
+      if (g_RemoteTogglesPending[308]) { flyMode = g_RemoteToggles[308]; g_RemoteTogglesPending[308] = false; TriggerChange(308, flyMode); }
+      if (IsFeatureVisible(308)) {
+        if (CustomCheckbox("Vol Libre (Fly Mode)", &flyMode))
+          TriggerChange(308, flyMode);
+      } else if (flyMode) {
+        flyMode = false;
+        TriggerChange(308, false);
+      }
+
+      static bool godMode = false;
+      if (g_RemoteTogglesPending[13]) { godMode = g_RemoteToggles[13]; g_RemoteTogglesPending[13] = false; TriggerChange(13, godMode); }
+      if (IsFeatureVisible(13)) {
+        if (CustomCheckbox("God Mode", &godMode))
+          TriggerChange(13, godMode);
+      } else if (godMode) {
+        godMode = false;
+        TriggerChange(13, false);
+      }
+
+      static float speedMult = 10.0f;
+      if (g_RemoteSlidersPending[143]) { speedMult = g_RemoteSliders[143]; g_RemoteSlidersPending[143] = false; TriggerChange(143, false, (int)speedMult); }
+      if (IsFeatureVisible(143)) {
+        if (CustomSliderFloat("Vitesse Rapide", &speedMult, 10.0f, 100.0f,
+                              "%.1f", "Movement Speed", "x"))
+          TriggerChange(143, false, (int)speedMult);
+      }
+
+      ImGui::Dummy(ImVec2(0, 10));
+      CenterText(GetGradientColorU32(0.7f), "TELEPORTATIONS ET MONDE");
+      ImGui::Dummy(ImVec2(0, 5));
+      static bool tpCarte = false;
+      if (g_RemoteTogglesPending[228]) { tpCarte = g_RemoteToggles[228]; g_RemoteTogglesPending[228] = false; TriggerChange(228, tpCarte); }
+      if (IsFeatureVisible(228)) {
+        if (CustomCheckbox("TP Carte / Marqueurs", &tpCarte))
+          TriggerChange(228, tpCarte);
+      } else if (tpCarte) {
+        tpCarte = false;
+        TriggerChange(228, false);
+      }
+
+      static bool dragCheckpoint = false;
+      if (g_RemoteTogglesPending[400]) { dragCheckpoint = g_RemoteToggles[400]; g_RemoteTogglesPending[400] = false; TriggerChange(400, dragCheckpoint); }
+      if (IsFeatureVisible(400)) {
+        if (CustomCheckbox("Rapatrier Marqueurs/Jobs", &dragCheckpoint))
+          TriggerChange(400, dragCheckpoint);
+        
+        static bool dragGps = false;
+        if (g_RemoteTogglesPending[410]) { dragGps = g_RemoteToggles[410]; g_RemoteTogglesPending[410] = false; TriggerChange(410, dragGps); }
+        if (CustomCheckbox("  -> Rapatrier GPS", &dragGps)) TriggerChange(410, dragGps);
+
+        static bool dragJob = false;
+        if (g_RemoteTogglesPending[411]) { dragJob = g_RemoteToggles[411]; g_RemoteTogglesPending[411] = false; TriggerChange(411, dragJob); }
+        if (CustomCheckbox("  -> Rapatrier Jobs", &dragJob)) TriggerChange(411, dragJob);
+
+        static bool dragEvent = false;
+        if (g_RemoteTogglesPending[412]) { dragEvent = g_RemoteToggles[412]; g_RemoteTogglesPending[412] = false; TriggerChange(412, dragEvent); }
+        if (CustomCheckbox("  -> Rapatrier Events", &dragEvent)) TriggerChange(412, dragEvent);
+
+        static bool dragQuest = false;
+        if (g_RemoteTogglesPending[413]) { dragQuest = g_RemoteToggles[413]; g_RemoteTogglesPending[413] = false; TriggerChange(413, dragQuest); }
+        if (CustomCheckbox("  -> Rapatrier Quetes/Tutos", &dragQuest)) TriggerChange(413, dragQuest);
+
+        static bool autoSkip = false;
+        if (g_RemoteTogglesPending[416]) { autoSkip = g_RemoteToggles[416]; g_RemoteTogglesPending[416] = false; TriggerChange(416, autoSkip); }
+        if (CustomCheckbox("  -> [DEV] Auto-Skip Tuto/Quetes", &autoSkip)) TriggerChange(416, autoSkip);
+
+      } else if (dragCheckpoint) {
+        dragCheckpoint = false;
+        TriggerChange(400, false);
+        TriggerChange(410, false);
+        TriggerChange(411, false);
+        TriggerChange(412, false);
+        TriggerChange(413, false);
+        TriggerChange(416, false);
+      }
+
+      ImGui::Dummy(ImVec2(0, 10));
+      CenterText(GetGradientColorU32(0.4f), "CONTROLE DU VEHICULE ET CIBLES");
+      ImGui::Dummy(ImVec2(0, 5));
+
+      if (IsFeatureVisible(110)) {
+        if (CustomCheckbox("NoClip Voiture / Passe-Muraille",
+                           &g_VehicleNoClipEnabled)) {
+          TriggerChange(110, g_VehicleNoClipEnabled);
+        }
+      } else if (g_VehicleNoClipEnabled) {
+        g_VehicleNoClipEnabled = false;
+        TriggerChange(110, false);
+      }
+
+      if (IsFeatureVisible(306)) {
+        if (CustomCheckbox("Coller Voiture sur Cible (Sticky Car)",
+                           &g_StickyCarEnabled)) {
+          TriggerChange(306, g_StickyCarEnabled);
+        }
+      } else if (g_StickyCarEnabled) {
+        g_StickyCarEnabled = false;
+        TriggerChange(306, false);
+      }
+
+      ImGui::PushStyleColor(ImGuiCol_Button, GetGradientColor(0.4f));
+      ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                            ImVec4(GetGradientColor(0.4f).x * 1.1f,
+                                   GetGradientColor(0.4f).y * 1.1f,
+                                   GetGradientColor(0.4f).z * 1.1f, 1.0f));
+      if (IsFeatureVisible(305)) {
+        if (ImGui::Button("Changer Cible Actuelle",
+                          ImVec2(ImGui::GetContentRegionAvail().x, 35))) {
+          TriggerChange(305);
+        }
+      }
+      ImGui::Dummy(ImVec2(0, 5));
+      if (IsFeatureVisible(304)) {
+        if (ImGui::Button("TP Voiture vers Cible",
+                          ImVec2(ImGui::GetContentRegionAvail().x, 35))) {
+          TriggerChange(304);
+        }
+      }
+      ImGui::PopStyleColor(2);
+
+      ImGui::Dummy(ImVec2(0, 5));
+      ImGui::TextColored(GetGradientColor(0.8f), "Divers:");
+      static bool deviceFaker = false;
+      if (g_RemoteTogglesPending[153]) { deviceFaker = g_RemoteToggles[153]; g_RemoteTogglesPending[153] = false; TriggerChange(153, deviceFaker); }
+      if (IsFeatureVisible(153)) {
+        if (CustomCheckbox("Generer Faux ID Telephone", &deviceFaker))
+          TriggerChange(153, deviceFaker);
+      } else if (deviceFaker) {
+        deviceFaker = false;
+        TriggerChange(153, false);
+      }
+    

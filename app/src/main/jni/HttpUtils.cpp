@@ -178,6 +178,13 @@ void GetAsync(const std::string& url, void (*cb)(const std::string&)) {
     }).detach();
 }
 
+void DeleteAsync(const std::string& url, void (*cb)(const std::string&)) {
+    std::thread([url, cb]() {
+        std::string r = DoHttpRequest(url, "DELETE", "");
+        if (cb) cb(r);
+    }).detach();
+}
+
 void PostAsync(const std::string& url, const std::string& body, void (*cb)(const std::string&)) {
     std::thread([url, body, cb]() {
         std::string r = DoHttpRequest(url, "POST", body);

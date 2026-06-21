@@ -2803,6 +2803,18 @@ extern "C" bool Esp_GetCameraVectors(V3 *forward, V3 *right) {
 
 V3 g_EspCamFwd = {0, 0, 0};
 V3 g_EspCamRight = {0, 0, 0};
+V3 g_EspCamPos = {0, 0, 0};
+
+extern "C" bool Esp_GetCameraPosition(V3 *pos) {
+  bool ok = false;
+  pthread_mutex_lock(&s_mtx);
+  if (s_vpValid) {
+    *pos = g_EspCamPos;
+    ok = true;
+  }
+  pthread_mutex_unlock(&s_mtx);
+  return ok;
+}
 
 extern "C" void Esp_CaptureCameraMatrix(void *cam) {
   if (!cam || !IsUnityObjectAlive(cam) || !fn_GetView || !fn_GetProj)
@@ -2839,8 +2851,6 @@ extern "C" void Esp_CaptureCameraMatrix(void *cam) {
   pthread_mutex_lock(&s_mtx);
   memcpy(s_vp16, vp.m, sizeof(s_vp16));
 
-  // Unity View matrix stores Right in row 0, Up in row 1, -Forward in row 2
-  // If matrix is column major, row 0 is m[0], m[4], m[8].
   g_EspCamRight.x = view.m[0];
   g_EspCamRight.y = view.m[4];
   g_EspCamRight.z = view.m[8];
@@ -2854,5 +2864,15 @@ extern "C" void Esp_CaptureCameraMatrix(void *cam) {
     s_camPixH = pixH;
   }
   s_vpValid = true;
+  
+  // Extract camera position from inverse view matrix
+  // Pos = -(R^T * T) where T is translation vector
+  float tx = view.m[12];
+  float ty = view.m[13];
+  float tz = view.m[14];
+  g_EspCamPos.x = -(view.m[0] * tx + view.m[1] * ty + view.m[2] * tz);
+  g_EspCamPos.y = -(view.m[4] * tx + view.m[5] * ty + view.m[6] * tz);
+  g_EspCamPos.z = -(view.m[8] * tx + view.m[9] * ty + view.m[10] * tz);
+
   pthread_mutex_unlock(&s_mtx);
 }
