@@ -2058,7 +2058,7 @@ style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
     float tgFloat = sin(time * 3.0f) * 2.0f; // Floating animation
 
     // --- Discord (Left) ---
-    const char *dcText = "GRAVITY MOD ONESTATE";
+    const char *dcText = "GRAVITY MOD (OTA SUCCESS)";
     float dcTextWidth = ImGui::CalcTextSize(dcText).x;
     float dcX = winPos.x + 25.0f;
     float dcY = winPos.y + 18.0f + tgFloat;
