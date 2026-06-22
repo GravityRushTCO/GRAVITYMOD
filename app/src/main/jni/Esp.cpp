@@ -587,8 +587,8 @@ void Esp_NotifyLocalActor(void *ca) {
         float dy = pos.y - s_camPos.y;
         float dz = pos.z - s_camPos.z;
         float distSq = dx * dx + dy * dy + dz * dz;
-        // Local player is always extremely close to the camera (< 4m)
-        if (distSq < 16.0f) {
+        // Local player is always extremely close to the camera (now relaxed to 40m to allow zoomed out / driving)
+        if (distSq < 1600.0f) {
           pthread_mutex_lock(&s_mtx);
           bool shouldUpdate = false;
           if (!s_localActor) {
@@ -1290,10 +1290,16 @@ void Esp_FrameTick() {
       if (actorTr) {
         V3 pPos = {0, 0, 0};
         fn_get_position(actorTr, &pPos);
-        // Only override if the player has dropped significantly
-        if (abs(pPos.y - s_teleportSpamPos.y) > 0.1f) {
-          s_teleportSpamPos = pPos;
-          s_teleportSpamPos.y += 0.5f; // Keep car at ground level
+        float dx = pPos.x - s_teleportSpamPos.x;
+        float dy = pPos.y - s_teleportSpamPos.y;
+        float dz = pPos.z - s_teleportSpamPos.z;
+        float distSq = dx * dx + dy * dy + dz * dz;
+        // Only allow height adjustments if we have arrived near target (prevents snapping back to old position)
+        if (distSq < 100.0f) {
+          if (abs(pPos.y - s_teleportSpamPos.y) > 0.1f) {
+            s_teleportSpamPos = pPos;
+            s_teleportSpamPos.y += 0.5f; // Keep car at ground level
+          }
         }
       }
     }
