@@ -28,6 +28,46 @@ struct TeleportPoint {
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 #include <vector>
+#include <string.h>
+
+int g_MenuLanguage = 0; // 0=FR, 1=EN, 2=AR, 3=ES
+const char* TR(const char* fr) {
+    if (strcmp(fr, "Activer Aimbot") == 0) { if (g_MenuLanguage==1) return "Enable Aimbot"; if (g_MenuLanguage==2) return "تفعيل التصويب"; if (g_MenuLanguage==3) return "Activar Aimbot"; }
+    if (strcmp(fr, "Tirer a travers les murs") == 0) { if (g_MenuLanguage==1) return "Wallbang"; if (g_MenuLanguage==2) return "التصويب عبر الجدران"; if (g_MenuLanguage==3) return "Disparar a través de las paredes"; }
+    if (strcmp(fr, "Verification de visibilite") == 0) { if (g_MenuLanguage==1) return "Visibility Check"; if (g_MenuLanguage==2) return "التحقق من الرؤية"; if (g_MenuLanguage==3) return "Verificar visibilidad"; }
+    if (strcmp(fr, "Lissage de visee") == 0) { if (g_MenuLanguage==1) return "Aim Smoothing"; if (g_MenuLanguage==2) return "تنعيم التصويب"; if (g_MenuLanguage==3) return "Suavizado de apuntado"; }
+    if (strcmp(fr, "Os cible") == 0) { if (g_MenuLanguage==1) return "Target Bone"; if (g_MenuLanguage==2) return "عظم الهدف"; if (g_MenuLanguage==3) return "Hueso objetivo"; }
+    if (strcmp(fr, "Suivre Joueur / Voiture Auto") == 0) { if (g_MenuLanguage==1) return "Auto-Follow Target"; if (g_MenuLanguage==2) return "متابعة تلقائية للهدف"; if (g_MenuLanguage==3) return "Seguir objetivo automáticamente"; }
+    if (strcmp(fr, "Distance de suivi") == 0) { if (g_MenuLanguage==1) return "Follow Distance"; if (g_MenuLanguage==2) return "مسافة المتابعة"; if (g_MenuLanguage==3) return "Distancia de seguimiento"; }
+    if (strcmp(fr, "Hauteur Auto-Follow") == 0) { if (g_MenuLanguage==1) return "Auto-Follow Height"; if (g_MenuLanguage==2) return "ارتفاع المتابعة"; if (g_MenuLanguage==3) return "Altura de seguimiento"; }
+    if (strcmp(fr, "Changer Cible Actuelle") == 0) { if (g_MenuLanguage==1) return "Change Target"; if (g_MenuLanguage==2) return "تغيير الهدف"; if (g_MenuLanguage==3) return "Cambiar objetivo"; }
+    if (strcmp(fr, "TP Voiture vers Cible") == 0) { if (g_MenuLanguage==1) return "TP Car to Target"; if (g_MenuLanguage==2) return "انتقال السيارة للهدف"; if (g_MenuLanguage==3) return "Teletransporte de coche a objetivo"; }
+    if (strcmp(fr, "Hauteur TP Cible") == 0) { if (g_MenuLanguage==1) return "TP Target Height"; if (g_MenuLanguage==2) return "ارتفاع انتقال الهدف"; if (g_MenuLanguage==3) return "Altura de teletransporte"; }
+    if (strcmp(fr, "Coller Voiture sur Cible") == 0) { if (g_MenuLanguage==1) return "Sticky Car"; if (g_MenuLanguage==2) return "لصق السيارة"; if (g_MenuLanguage==3) return "Coche pegajoso"; }
+    if (strcmp(fr, "Activer ESP") == 0) { if (g_MenuLanguage==1) return "Enable ESP"; if (g_MenuLanguage==2) return "تفعيل الكشف"; if (g_MenuLanguage==3) return "Activar ESP"; }
+    if (strcmp(fr, "Lignes") == 0) { if (g_MenuLanguage==1) return "Lines"; if (g_MenuLanguage==2) return "خطوط"; if (g_MenuLanguage==3) return "Líneas"; }
+    if (strcmp(fr, "Boites") == 0) { if (g_MenuLanguage==1) return "Boxes"; if (g_MenuLanguage==2) return "صناديق"; if (g_MenuLanguage==3) return "Cajas"; }
+    if (strcmp(fr, "Distance") == 0) { if (g_MenuLanguage==1) return "Distance"; if (g_MenuLanguage==2) return "مسافة"; if (g_MenuLanguage==3) return "Distancia"; }
+    if (strcmp(fr, "Sante") == 0) { if (g_MenuLanguage==1) return "Health"; if (g_MenuLanguage==2) return "صحة"; if (g_MenuLanguage==3) return "Salud"; }
+    if (strcmp(fr, "Noms") == 0) { if (g_MenuLanguage==1) return "Names"; if (g_MenuLanguage==2) return "أسماء"; if (g_MenuLanguage==3) return "Nombres"; }
+    if (strcmp(fr, "Squelette") == 0) { if (g_MenuLanguage==1) return "Skeleton"; if (g_MenuLanguage==2) return "هيكل عظمي"; if (g_MenuLanguage==3) return "Esqueleto"; }
+    if (strcmp(fr, "Viseur") == 0) { if (g_MenuLanguage==1) return "Crosshair"; if (g_MenuLanguage==2) return "مؤشر التصويب"; if (g_MenuLanguage==3) return "Punto de mira"; }
+    if (strcmp(fr, "Afficher Cercle FOV") == 0) { if (g_MenuLanguage==1) return "Show FOV Circle"; if (g_MenuLanguage==2) return "إظهار دائرة الرؤية"; if (g_MenuLanguage==3) return "Mostrar círculo FOV"; }
+    if (strcmp(fr, "Rayon Zone FOV Aimbot") == 0) { if (g_MenuLanguage==1) return "Aimbot FOV Radius"; if (g_MenuLanguage==2) return "نصف قطر الرؤية"; if (g_MenuLanguage==3) return "Radio FOV Aimbot"; }
+    if (strcmp(fr, "Rayon Cercle FOV") == 0) { if (g_MenuLanguage==1) return "FOV Circle Radius"; if (g_MenuLanguage==2) return "نصف قطر دائرة الرؤية"; if (g_MenuLanguage==3) return "Radio de círculo FOV"; }
+    if (strcmp(fr, "Champ de vision") == 0) { if (g_MenuLanguage==1) return "Field of View"; if (g_MenuLanguage==2) return "مجال الرؤية"; if (g_MenuLanguage==3) return "Campo de visión"; }
+    if (strcmp(fr, "NoClip Joueur & Voiture") == 0) { if (g_MenuLanguage==1) return "NoClip Player & Car"; if (g_MenuLanguage==2) return "اختراق الجدران"; if (g_MenuLanguage==3) return "NoClip Jugador y Coche"; }
+    if (strcmp(fr, "Vol Libre (Fly Mode)") == 0) { if (g_MenuLanguage==1) return "Fly Mode"; if (g_MenuLanguage==2) return "طيران"; if (g_MenuLanguage==3) return "Modo de vuelo"; }
+    if (strcmp(fr, "Vitesse Joueur (Speed Multiplier)") == 0) { if (g_MenuLanguage==1) return "Player Speed (Multiplier)"; if (g_MenuLanguage==2) return "سرعة اللاعب"; if (g_MenuLanguage==3) return "Velocidad del jugador"; }
+    if (strcmp(fr, "AimLock (Camera)") == 0) { if (g_MenuLanguage==1) return "AimLock (Camera)"; if (g_MenuLanguage==2) return "قفل التصويب (كاميرا)"; if (g_MenuLanguage==3) return "Bloqueo de apuntado (Cámara)"; }
+    if (strcmp(fr, "Faux ID Telephone") == 0) { if (g_MenuLanguage==1) return "Fake Phone ID"; if (g_MenuLanguage==2) return "رقم هاتف مزيف"; if (g_MenuLanguage==3) return "ID de teléfono falso"; }
+    if (strcmp(fr, "Delai Rapatriement (sec)") == 0) { if (g_MenuLanguage==1) return "Gather Delay (sec)"; if (g_MenuLanguage==2) return "تأخير التجميع"; if (g_MenuLanguage==3) return "Retraso de recolección"; }
+    if (strcmp(fr, "AIMBOT & ASSISTANCE") == 0) { if (g_MenuLanguage==1) return "AIMBOT & ASSIST"; if (g_MenuLanguage==2) return "مساعدة وتصويب"; if (g_MenuLanguage==3) return "AIMBOT Y ASISTENCIA"; }
+    if (strcmp(fr, "CIBLE & AUTO-FOLLOW") == 0) { if (g_MenuLanguage==1) return "TARGET & FOLLOW"; if (g_MenuLanguage==2) return "هدف ومتابعة"; if (g_MenuLanguage==3) return "OBJETIVO Y SEGUIMIENTO"; }
+    if (strcmp(fr, "ESP & VISUELS") == 0) { if (g_MenuLanguage==1) return "ESP & VISUALS"; if (g_MenuLanguage==2) return "كشف ورؤية"; if (g_MenuLanguage==3) return "ESP Y VISUALES"; }
+    if (strcmp(fr, "MONDE & DIVERS") == 0) { if (g_MenuLanguage==1) return "WORLD & MISC"; if (g_MenuLanguage==2) return "عالم ومتنوعات"; if (g_MenuLanguage==3) return "MUNDO Y VARIOS"; }
+    return fr;
+}
 
 void stbi_write_func_callback(void *context, void *data, int size) {
   std::vector<unsigned char> *out = (std::vector<unsigned char> *)context;
@@ -2223,7 +2263,7 @@ void ImGuiMenu::render() {
           TriggerChange(120, aimEnabled);
         }
         if (IsFeatureVisible(120)) {
-          if (CustomCheckbox("Activer Aimbot", &aimEnabled))
+          if (CustomCheckbox(TR("Activer Aimbot"), &aimEnabled))
             TriggerChange(120, aimEnabled);
         }
         break;
@@ -2236,7 +2276,7 @@ void ImGuiMenu::render() {
           TriggerChange(132, wallBang);
         }
         if (IsFeatureVisible(132)) {
-          if (CustomCheckbox("Tirer a travers les murs", &wallBang))
+          if (CustomCheckbox(TR("Tirer a travers les murs"), &wallBang))
             TriggerChange(132, wallBang);
         } else if (wallBang) {
           wallBang = false;
@@ -2252,7 +2292,7 @@ void ImGuiMenu::render() {
           TriggerChange(184, visCheck);
         }
         if (IsFeatureVisible(184)) {
-          if (CustomCheckbox("Verification de visibilite", &visCheck))
+          if (CustomCheckbox(TR("Verification de visibilite"), &visCheck))
             TriggerChange(184, visCheck);
         } else if (visCheck) {
           visCheck = false;
@@ -2268,9 +2308,39 @@ void ImGuiMenu::render() {
           TriggerChange(185, false, (int)aimSmooth);
         }
         if (IsFeatureVisible(185)) {
-          if (CustomSliderFloat("Lissage de visee", &aimSmooth, 0.0f, 10.0f,
+          if (CustomSliderFloat(TR("Lissage de visee"), &aimSmooth, 0.0f, 10.0f,
                                 "%.1f", "Lissage aimbot (Force)", "x"))
             TriggerChange(185, false, (int)aimSmooth);
+        }
+        break;
+      }
+      case 186: {
+        static bool aimLockCam = false;
+        if (g_RemoteTogglesPending[186]) {
+          aimLockCam = g_RemoteToggles[186];
+          g_RemoteTogglesPending[186] = false;
+          TriggerChange(186, aimLockCam);
+        }
+        if (IsFeatureVisible(186)) {
+          if (CustomCheckbox(TR("AimLock (Camera)"), &aimLockCam))
+            TriggerChange(186, aimLockCam);
+        } else if (aimLockCam) {
+          aimLockCam = false;
+          TriggerChange(186, false);
+        }
+        break;
+      }
+      case 421: {
+        static float speedMult = 1.0f;
+        if (g_RemoteSlidersPending[421]) {
+          speedMult = g_RemoteSliders[421];
+          g_RemoteSlidersPending[421] = false;
+          TriggerChange(421, false, (int)speedMult);
+        }
+        if (IsFeatureVisible(421)) {
+          if (CustomSliderFloat(TR("Vitesse Joueur (Speed Multiplier)"), &speedMult, 1.0f, 10.0f,
+                                "%.1fx", "Multiplicateur de vitesse", "x"))
+            TriggerChange(421, false, (int)speedMult);
         }
         break;
       }
@@ -2279,7 +2349,7 @@ void ImGuiMenu::render() {
         static int bonePriority = 0;
         const char *boneNames[] = {"Torse", "Cou", "Tete", "Bassin"};
         if (IsFeatureVisible(183)) {
-          if (CustomCombo("Os cible", &bonePriority, boneNames, 4, "Os cible"))
+          if (CustomCombo(TR("Os cible"), &bonePriority, boneNames, 4, TR("Os cible")))
             TriggerChange(183, false, bonePriority);
         }
         break;
@@ -2293,7 +2363,7 @@ void ImGuiMenu::render() {
           TriggerChange(300, autoFollow);
         }
         if (IsFeatureVisible(300)) {
-          if (CustomCheckbox("Suivre Joueur / Voiture Auto", &autoFollow)) {
+          if (CustomCheckbox(TR("Suivre Joueur / Voiture Auto"), &autoFollow)) {
             TriggerChange(300, autoFollow);  // Suivre joueur
             TriggerChange(301, autoFollow);  // Suivre voiture
             g_VipMoveToVehicle = autoFollow; // S'attacher a la voiture
@@ -2320,7 +2390,7 @@ void ImGuiMenu::render() {
           TriggerChange(302, false, (int)followDist);
         }
         if (IsFeatureVisible(302)) {
-          if (CustomSliderFloat("Distance de suivi", &followDist, 0.0f, 100.0f,
+          if (CustomSliderFloat(TR("Distance de suivi"), &followDist, 0.0f, 100.0f,
                                 "%.0f", "Distance auto-suivi", "m")) {
             TriggerChange(302, false, (int)followDist);
           }
@@ -2334,7 +2404,7 @@ void ImGuiMenu::render() {
           TriggerChange(303, false, (int)followHeight);
         }
         if (IsFeatureVisible(303)) {
-          if (CustomSliderFloat("Hauteur Auto-Follow", &followHeight, -5.0f, 20.0f,
+          if (CustomSliderFloat(TR("Hauteur Auto-Follow"), &followHeight, -5.0f, 20.0f,
                                 "%.1f", "Hauteur du joueur en vol", "m")) {
             TriggerChange(303, false, (int)followHeight);
           }
@@ -2349,7 +2419,7 @@ void ImGuiMenu::render() {
           TriggerChange(307, false, (int)tpHeight);
         }
         if (IsFeatureVisible(307)) {
-          if (CustomSliderFloat("Hauteur TP Cible", &tpHeight, -5.0f, 20.0f,
+          if (CustomSliderFloat(TR("Hauteur TP Cible"), &tpHeight, -5.0f, 20.0f,
                                 "%.1f", "Hauteur du TP au-dessus", "m")) {
             TriggerChange(307, false, (int)tpHeight);
           }
@@ -2364,7 +2434,7 @@ void ImGuiMenu::render() {
           TriggerChange(121, espEnabled);
         }
         if (IsFeatureVisible(121)) {
-          if (CustomCheckbox("Activer ESP", &espEnabled))
+          if (CustomCheckbox(TR("Activer ESP"), &espEnabled))
             TriggerChange(121, espEnabled);
         }
         break;
@@ -2377,7 +2447,7 @@ void ImGuiMenu::render() {
           TriggerChange(194, espLine);
         }
         if (IsFeatureVisible(194)) {
-          if (CustomCheckbox("Lignes", &espLine))
+          if (CustomCheckbox(TR("Lignes"), &espLine))
             TriggerChange(194, espLine);
         } else if (espLine) {
           espLine = false;
@@ -2393,7 +2463,7 @@ void ImGuiMenu::render() {
           TriggerChange(195, espBox);
         }
         if (IsFeatureVisible(195)) {
-          if (CustomCheckbox("Boites", &espBox))
+          if (CustomCheckbox(TR("Boites"), &espBox))
             TriggerChange(195, espBox);
         }
         break;
@@ -2406,7 +2476,7 @@ void ImGuiMenu::render() {
           TriggerChange(196, espDistance);
         }
         if (IsFeatureVisible(196)) {
-          if (CustomCheckbox("Distance", &espDistance))
+          if (CustomCheckbox(TR("Distance"), &espDistance))
             TriggerChange(196, espDistance);
         } else if (espDistance) {
           espDistance = false;
@@ -2422,7 +2492,7 @@ void ImGuiMenu::render() {
           TriggerChange(241, espHealth);
         }
         if (IsFeatureVisible(241)) {
-          if (CustomCheckbox("Sante", &espHealth))
+          if (CustomCheckbox(TR("Sante"), &espHealth))
             TriggerChange(241, espHealth);
         }
         break;
@@ -2435,7 +2505,7 @@ void ImGuiMenu::render() {
           TriggerChange(197, espName);
         }
         if (IsFeatureVisible(197)) {
-          if (CustomCheckbox("Noms", &espName))
+          if (CustomCheckbox(TR("Noms"), &espName))
             TriggerChange(197, espName);
         } else if (espName) {
           espName = false;
@@ -2451,7 +2521,7 @@ void ImGuiMenu::render() {
           TriggerChange(199, espSkeleton);
         }
         if (IsFeatureVisible(199)) {
-          if (CustomCheckbox("Squelette", &espSkeleton)) {
+          if (CustomCheckbox(TR("Squelette"), &espSkeleton)) {
             Esp_SetSkeletonEnabled(espSkeleton);
             TriggerChange(199, espSkeleton);
           }
@@ -2478,7 +2548,7 @@ void ImGuiMenu::render() {
       case 242: {
         bool circle = Esp_IsCrosshairCircleEnabled();
         if (IsFeatureVisible(242)) {
-          if (CustomCheckbox("Afficher Cercle FOV", &circle)) {
+          if (CustomCheckbox(TR("Afficher Cercle FOV"), &circle)) {
             Esp_SetCrosshairCircleEnabled(circle);
             TriggerChange(242, circle);
           }
@@ -2503,7 +2573,7 @@ void ImGuiMenu::render() {
           TriggerChange(243, false, (int)circleRadius);
         }
         if (IsFeatureVisible(243)) {
-          if (CustomSliderFloat("Rayon Cercle FOV", &circleRadius, 10.0f,
+          if (CustomSliderFloat(TR("Rayon Cercle FOV"), &circleRadius, 10.0f,
                                 400.0f, "%.0f", "px", "R")) {
             Esp_SetCrosshairCircleRadius((int)circleRadius);
             TriggerChange(243, false, (int)circleRadius);
@@ -2524,8 +2594,8 @@ void ImGuiMenu::render() {
           TriggerChange(193, false, (int)fovCamera);
         }
         if (IsFeatureVisible(193)) {
-          if (CustomSliderFloat("Champ de vision", &fovCamera, 30.0f, 150.0f,
-                                "%.0f", "Rayon Zone FOV Aimbot", "px"))
+          if (CustomSliderFloat(TR("Champ de vision"), &fovCamera, 30.0f, 150.0f,
+                                "%.0f", TR("Rayon Zone FOV Aimbot"), "px"))
             TriggerChange(193, false, (int)fovCamera);
         }
         break;
@@ -2539,7 +2609,7 @@ void ImGuiMenu::render() {
           TriggerChange(109, noClip);
         }
         if (IsFeatureVisible(109)) {
-          if (CustomCheckbox("NoClip Joueur & Voiture", &noClip)) {
+          if (CustomCheckbox(TR("NoClip Joueur & Voiture"), &noClip)) {
             TriggerChange(109, noClip); // Joueur
             g_VehicleNoClipEnabled = noClip;
             TriggerChange(110, noClip); // Voiture
@@ -2560,7 +2630,7 @@ void ImGuiMenu::render() {
           TriggerChange(308, flyMode);
         }
         if (IsFeatureVisible(308)) {
-          if (CustomCheckbox("Vol Libre (Fly Mode)", &flyMode))
+          if (CustomCheckbox(TR("Vol Libre (Fly Mode)"), &flyMode))
             TriggerChange(308, flyMode);
         } else if (flyMode) {
           flyMode = false;
@@ -2747,7 +2817,7 @@ void ImGuiMenu::render() {
           TriggerChange(231, false, (int)delaiRapat);
         }
         if (IsFeatureVisible(231)) {
-          if (CustomSliderFloat("Delai Rapatriement (sec)", &delaiRapat, 0.0f,
+          if (CustomSliderFloat(TR("Delai Rapatriement (sec)"), &delaiRapat, 0.0f,
                                 10.0f, "%.1f", "Delai (sec)", "s"))
             TriggerChange(231, false, (int)delaiRapat);
         }
@@ -2756,7 +2826,7 @@ void ImGuiMenu::render() {
 
       case 305: {
         if (IsFeatureVisible(305)) {
-          if (ImGui::Button("Changer Cible Actuelle",
+          if (ImGui::Button(TR("Changer Cible Actuelle"),
                             ImVec2(ImGui::GetContentRegionAvail().x, 35))) {
             TriggerChange(305);
           }
@@ -2765,7 +2835,7 @@ void ImGuiMenu::render() {
       }
       case 304: {
         if (IsFeatureVisible(304)) {
-          if (ImGui::Button("TP Voiture vers Cible",
+          if (ImGui::Button(TR("TP Voiture vers Cible"),
                             ImVec2(ImGui::GetContentRegionAvail().x, 35))) {
             TriggerChange(304);
           }
@@ -2831,16 +2901,18 @@ void ImGuiMenu::render() {
           ImGui::Columns(2, "AimbotCols", false);
           ImGui::SetColumnWidth(0, ImGui::GetWindowWidth() * 0.55f);
           
-          CenterText(GetGradientColorU32(0.3f), "AIMBOT & ASSISTANCE");
+          CenterText(GetGradientColorU32(0.3f), TR("AIMBOT & ASSISTANCE"));
           ImGui::Dummy(ImVec2(0, 5));
           RenderFeature(120); // Activer Aimbot
           RenderFeature(132); // Tirer a travers les murs
           RenderFeature(184); // Verification de visibilite
           RenderFeature(185); // Lissage de visee (Force)
+          RenderFeature(186); // AimLock Camera
           RenderFeature(183); // Os cible
+          RenderFeature(421); // Speed Multiplier
           
           ImGui::NextColumn();
-          CenterText(GetGradientColorU32(0.6f), "CIBLE & AUTO-FOLLOW");
+          CenterText(GetGradientColorU32(0.6f), TR("CIBLE & AUTO-FOLLOW"));
           ImGui::Dummy(ImVec2(0, 5));
           RenderFeature(300); // Suivre Joueur/Voiture Auto
           RenderFeature(306); // Coller Voiture (Sticky Car)
@@ -2851,7 +2923,7 @@ void ImGuiMenu::render() {
           RenderFeature(307); // Hauteur TP Cible
           ImGui::Columns(1);
         } else if (physicalTab == 1) {
-          CenterText(GetGradientColorU32(0.5f), "ESP & VISUELS");
+          CenterText(GetGradientColorU32(0.5f), TR("ESP & VISUELS"));
           ImGui::Dummy(ImVec2(0, 5));
           RenderFeature(121); // Activer ESP
           RenderFeature(194); // Lignes
@@ -2865,7 +2937,7 @@ void ImGuiMenu::render() {
           RenderFeature(243); // Rayon Cercle FOV
           RenderFeature(193); // Champ de vision (FOV ESP)
         } else if (physicalTab == 2) {
-          CenterText(GetGradientColorU32(0.7f), "MONDE & DIVERS");
+          CenterText(GetGradientColorU32(0.7f), TR("MONDE & DIVERS"));
           ImGui::Dummy(ImVec2(0, 5));
           RenderFeature(109); // NoClip
           RenderFeature(308); // Vol Libre (Fly Mode)
@@ -3619,7 +3691,7 @@ void ImGuiMenu::render() {
       static bool deviceFaker = false;
       ImGui::SetCursorPos(ImVec2(winW - 190.0f, winH - barH + 9.0f));
       ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(tC.x, tC.y, tC.z, 1.0f));
-      if (ImGui::Checkbox("Faux ID Telephone", &deviceFaker)) {
+      if (ImGui::Checkbox(TR("Faux ID Telephone"), &deviceFaker)) {
         TriggerChange(153, deviceFaker);
       }
       ImGui::PopStyleColor();
