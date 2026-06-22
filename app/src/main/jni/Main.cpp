@@ -633,8 +633,7 @@ static void hook_SetMapPosition(void *_this, V3 worldPosition, void *method) {
     double now = Esp_GetTimeMs();
     if (now - lastMapTpTime > 800.0) {
       lastMapTpTime = now;
-      // Spawn map marker position 20 units higher, physics will drop the player correctly
-      Teleport_ToPosition(worldPosition.x, worldPosition.y + 20.0f, worldPosition.z, true);
+      Teleport_ToPosition(worldPosition.x, worldPosition.y, worldPosition.z, true);
     }
   }
 
@@ -2659,14 +2658,24 @@ static bool hook_TryGetNearVehicleSeat(void *_this, V3 position, void *vehiclesK
                                                  void *controlsData = *(void **)((char *)stashControlsEntity + 0x28);
                                                  if (isValidPointer(controlsMap) && isValidPointer(controlsData)) {
                                                    if (g_LocalPlayerEntityId != -1) {
-                                                     int controlsSlot = -1;
-                                                     if (fn_TryGetIndex(controlsMap, g_LocalPlayerEntityId, &controlsSlot)) {
-                                                       MorpehEntity *vehEntityValPtr = (MorpehEntity *)((char *)controlsData + 0x20) + controlsSlot;
-                                                       if (isValidPointer(vehEntityValPtr) && vehEntityValPtr->id_gen != 0) {
-                                                         g_LocalPlayerVehicleEntityId = fn_Entity_get_Id(vehEntityValPtr);
-                                                       }
-                                                     }
-                                                   }
+                                                      int pedSlot = -1;
+                                                      int pedEntityId = -1;
+                                                      if (fn_TryGetIndex(controlsMap, g_LocalPlayerEntityId, &pedSlot)) {
+                                                        MorpehEntity *pedEntityValPtr = (MorpehEntity *)((char *)controlsData + 0x20) + pedSlot;
+                                                        if (isValidPointer(pedEntityValPtr) && pedEntityValPtr->id_gen != 0) {
+                                                          pedEntityId = fn_Entity_get_Id(pedEntityValPtr);
+                                                        }
+                                                      }
+                                                      if (pedEntityId != -1) {
+                                                        int vehSlot = -1;
+                                                        if (fn_TryGetIndex(controlsMap, pedEntityId, &vehSlot)) {
+                                                          MorpehEntity *vehEntityValPtr = (MorpehEntity *)((char *)controlsData + 0x20) + vehSlot;
+                                                          if (isValidPointer(vehEntityValPtr) && vehEntityValPtr->id_gen != 0) {
+                                                            g_LocalPlayerVehicleEntityId = fn_Entity_get_Id(vehEntityValPtr);
+                                                          }
+                                                        }
+                                                      }
+                                                    }
                                                  }
                                                }
                                              }

@@ -49,7 +49,7 @@
 #define RVA_WeaponAttackEmitDatagram_Write 0x2BDF918
 #define RVA_CasinoShopBuyRequestDatagram_Write 0x29FAE84
 #define RVA_UpdatePath 0x312F078
-#define RVA_SetMapPosition 0x25238A0
+#define RVA_SetMapPosition 0x2515984
 #define RVA_CreateMapCheckpointSignalHandler 0x251D674
 #define RVA_CreateMapGpsCheckpoint_ctor 0x282A168
 #define RVA_VehicleOcclusionObject_OnEnable 0X310D944
