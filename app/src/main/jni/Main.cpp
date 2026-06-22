@@ -1711,6 +1711,25 @@ static bool hook_TryGetNearVehicleSeat(void *_this, V3 position, void *vehiclesK
                                                                       value);
                                        }
 
+                                       // TryGetIndex function pointer
+                                       typedef bool (*TryGetIndex_t)(
+                                           void *self, int key, int *slotIndex);
+                                       extern TryGetIndex_t fn_TryGetIndex;
+
+                                       // Entity.get_Id function pointer
+                                       typedef int (*Entity_get_Id_t)(
+                                           void *entityVal);
+                                       extern Entity_get_Id_t fn_Entity_get_Id;
+
+                                       // Global local player entity tracker
+                                       struct MorpehEntity {
+                                         unsigned long long id_gen;
+                                         void *world;
+                                       };
+                                       extern MorpehEntity g_LocalPlayerEntityVal;
+                                       extern int g_LocalPlayerEntityId;
+                                       extern int g_LocalPlayerVehicleEntityId;
+
                                        typedef void (*EventSystem_Update_t)(
                                            void *self, void *method);
                                        static EventSystem_Update_t
@@ -2109,27 +2128,17 @@ static bool hook_TryGetNearVehicleSeat(void *_this, V3 position, void *vehiclesK
                                                                     method);
                                        }
 
-                                       // TryGetIndex function pointer
-                                       typedef bool (*TryGetIndex_t)(
-                                           void *self, int key, int *slotIndex);
                                        TryGetIndex_t fn_TryGetIndex = nullptr;
 
                                        // Entity.get_Id function pointer
-                                       typedef int (*Entity_get_Id_t)(
-                                           void *entityVal);
                                        Entity_get_Id_t fn_Entity_get_Id =
                                            nullptr;
 
-                                       // Global local player entity tracker
-                                       struct MorpehEntity {
-                                         unsigned long long id_gen;
-                                         void *world;
-                                       };
-                                       static MorpehEntity
+                                       MorpehEntity
                                            g_LocalPlayerEntityVal = {0,
                                                                      nullptr};
-                                       static int g_LocalPlayerEntityId = -1;
-                                       static int g_LocalPlayerVehicleEntityId = -1;
+                                       int g_LocalPlayerEntityId = -1;
+                                       int g_LocalPlayerVehicleEntityId = -1;
 
                                        typedef void (
                                            *ElementHealthSyncSystem_OnUpdate_t)(
