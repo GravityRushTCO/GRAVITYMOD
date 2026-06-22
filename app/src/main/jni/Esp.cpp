@@ -1622,7 +1622,7 @@ void Esp_FrameTick() {
   }
   pthread_mutex_lock(&s_mtx);
   s_snapshot = std::move(out);
-  if (localIdx >= 0 && localIdx < (int)actors.size() && minDist < 5.0f) {
+  if (localIdx >= 0 && localIdx < (int)actors.size()) {
     if (s_localActor != actors[localIdx]) {
       E_LOGI("Teleport-ready: s_localActor updated via scan = %p (was %p, "
              "dist=%.1f)",
