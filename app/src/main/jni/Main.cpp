@@ -1589,8 +1589,7 @@ static bool hook_TryGetNearVehicleSeat(void *_this, V3 position, void *vehiclesK
                                              z = 0.0f;
                                            } else {
                                              s_localVelocity = {0, 0, 0};
-                                             if (g_SpeedMultiplier > 1.01f &&
-                                                 isCharacterGrounded(self)) {
+                                             if (g_SpeedMultiplier > 1.01f) {
                                                x *= g_SpeedMultiplier;
                                                z *= g_SpeedMultiplier;
                                              }
@@ -1615,8 +1614,7 @@ static bool hook_TryGetNearVehicleSeat(void *_this, V3 position, void *vehiclesK
                                              return; // Handled dynamically in
                                                      // SetVelocity or overrides
                                            } else {
-                                             if (g_SpeedMultiplier > 1.01f &&
-                                                 isCharacterGrounded(self)) {
+                                             if (g_SpeedMultiplier > 1.01f) {
                                                x *= g_SpeedMultiplier;
                                                z *= g_SpeedMultiplier;
                                              }

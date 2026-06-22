@@ -2607,15 +2607,15 @@ style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
       case 421: {
         static float speedMult = 1.0f;
         if (g_RemoteSlidersPending[421]) {
-          speedMult = g_RemoteSliders[421];
+          speedMult = g_RemoteSliders[421] / 10.0f;
           g_RemoteSlidersPending[421] = false;
-          TriggerChange(421, false, (int)speedMult);
+          TriggerChange(421, false, (int)(speedMult * 10.0f));
         }
         if (IsFeatureVisible(421)) {
           if (CustomSliderFloat(TR("Vitesse Joueur (Speed Multiplier)"),
                                 &speedMult, 1.0f, 10.0f, "%.1fx",
                                 "Multiplicateur de vitesse", "x"))
-            TriggerChange(421, false, (int)speedMult);
+            TriggerChange(421, false, (int)(speedMult * 10.0f));
         }
         break;
       }
