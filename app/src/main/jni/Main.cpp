@@ -720,6 +720,36 @@ static bool hook_FindGoal(void *_this, int playerDimension, V3 position,
     extern bool g_DragCheckpointEvent;
     extern bool g_DragCheckpointQuest;
     extern bool g_DragCheckpointOther;
+    
+    extern bool g_TpCarteToggle;
+    float distToOrigin = gx * gx + gy * gy + gz * gz;
+    if (distToOrigin > 1.0f) {
+        static double lastTpTime = 0;
+        double now = Esp_GetTimeMs();
+
+        extern V3 g_LastExecutedWaypoint;
+        float dx = gx - g_LastExecutedWaypoint.x;
+        float dy = gy - g_LastExecutedWaypoint.y;
+        float dz = gz - g_LastExecutedWaypoint.z;
+        float distSq = dx*dx + dy*dy + dz*dz;
+
+        if (distSq > 1.0f || (now - lastTpTime > 1000.0)) {
+            if (g_TpCarteToggle) {
+                lastTpTime = now;
+                g_LastExecutedWaypoint = {gx, gy, gz};
+
+                extern bool g_PlayerInVehicle;
+                extern void *g_LastLocalVehicle;
+                if (g_PlayerInVehicle && g_LastLocalVehicle) {
+                    extern void Esp_DirectVehicleTP(void* vehicle, float tx, float ty, float tz, bool keepVelocity);
+                    Esp_DirectVehicleTP(g_LastLocalVehicle, gx, gy, gz, true);
+                } else {
+                    extern bool Teleport_ToPosition(float x, float y, float z, bool ignoreCooldown = false);
+                    Teleport_ToPosition(gx, gy, gz, true);
+                }
+            }
+        }
+    }
 
     bool dragAny = g_DragCheckpointToPlayer || g_DragCheckpointGPS ||
                    g_DragCheckpointJob || g_DragCheckpointEvent ||
@@ -2685,8 +2715,8 @@ static bool hook_TryGetNearVehicleSeat(void *_this, V3 position, void *vehiclesK
                                              }
                                            }
 
-                                           // Only replace if it matches the local player's vehicle!
-                                           if (g_LocalPlayerVehicleEntityId != -1 && entityId == g_LocalPlayerVehicleEntityId) {
+                                           // Replace for ALL vehicles as requested
+                                           if (true) {
                                              if (g_VehicleReplaceVal > 0 &&
                                                  g_VehicleReplaceVal <
                                                      vehicleCatalogSize) {
