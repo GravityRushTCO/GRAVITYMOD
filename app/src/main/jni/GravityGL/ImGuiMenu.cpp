@@ -1968,6 +1968,7 @@ void ImGuiMenu::render() {
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
     
     if (ImGui::Button("TP", ImVec2(btnSizeXY, btnSizeXY))) {
+      extern bool g_TpCarteToggle;
       TriggerChange(228, !g_TpCarteToggle);
     }
     
