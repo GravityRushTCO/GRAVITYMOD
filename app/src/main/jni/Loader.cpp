@@ -98,6 +98,7 @@ void BackgroundUpdateThread(std::string payloadPath, std::string serverUrl) {
     if (DownloadFileJNI(serverUrl, tmpPath)) {
         LOGI("Background update downloaded successfully. Applying for next launch.");
         chmod(tmpPath.c_str(), S_IRWXU);
+        unlink(payloadPath.c_str());
         rename(tmpPath.c_str(), payloadPath.c_str());
     } else {
         LOGE("Background update failed.");
@@ -108,6 +109,13 @@ void BackgroundUpdateThread(std::string payloadPath, std::string serverUrl) {
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     g_jvm = vm;
     LOGI("ModLoader JNI_OnLoad called.");
+
+    // Check for fake ID reset marker
+    if (access("/data/data/com.onestate.global/reset_pending", F_OK) == 0) {
+        LOGI("Fake ID was active on close. Resetting PlayerPrefs...");
+        system("rm -rf /data/data/com.onestate.global/shared_prefs/*");
+        remove("/data/data/com.onestate.global/reset_pending");
+    }
     
     std::string filesDir = GetAppDataDir();
     if (filesDir.empty()) {
