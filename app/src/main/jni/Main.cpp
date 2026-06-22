@@ -1752,45 +1752,6 @@ static bool hook_TryGetNearVehicleSeat(void *_this, V3 position, void *vehiclesK
                                          // disabled during shooting
                                          Aimbot_TempEnableGodMode();
 
-                                         // ── Vehicle Skin: enforce every 500ms ──
-                                         // More robust than Construct-only: re-applies
-                                         // to all vehicles even after they despawn/respawn.
-                                         if (g_VehicleReplaceVal > 0 &&
-                                             g_VehicleReplaceVal < vehicleCatalogSize &&
-                                             g_VehiclesStreamingProviderInstance &&
-                                             fn_TryGetIndex) {
-                                           static double lastSkinTick = 0.0;
-                                           extern double Esp_GetTimeMs();
-                                           double now = Esp_GetTimeMs();
-                                           if (now - lastSkinTick > 500.0) {
-                                             lastSkinTick = now;
-                                             void *provider = g_VehiclesStreamingProviderInstance;
-                                             void *stashModel = isValidPointer(provider)
-                                                 ? *(void **)((char *)provider + 0x78)
-                                                 : nullptr;
-                                             if (isValidPointer(stashModel)) {
-                                               void *modelMap  = *(void **)((char *)stashModel + 0x20);
-                                               void *modelData = *(void **)((char *)stashModel + 0x28);
-                                               if (isValidPointer(modelMap) && isValidPointer(modelData)) {
-                                                 // Sparse set: keys array at +0x00 (count at +0x18),
-                                                 // values array starts at data+0x20
-                                                 int *countPtr = (int *)((char *)modelMap + 0x18);
-                                                 if (isValidPointer(countPtr)) {
-                                                   int count = *countPtr;
-                                                   if (count > 0 && count < 4096) {
-                                                     int targetId = vehicleCatalog[g_VehicleReplaceVal].idVal;
-                                                     int *values = (int *)((char *)modelData + 0x20);
-                                                     for (int i = 0; i < count; i++) {
-                                                       int *slot = values + i;
-                                                       if (isValidPointer(slot))
-                                                         *slot = targetId;
-                                                     }
-                                                   }
-                                                 }
-                                               }
-                                             }
-                                           }
-                                         }
 
                                          // ── Player Skin: enforce every 500ms ──
                                          if (g_SkinReplaceVal > 0 &&
@@ -2760,45 +2721,10 @@ static bool hook_TryGetNearVehicleSeat(void *_this, V3 position, void *vehiclesK
                                            void *stashVehicleView =
                                                *(void **)((char *)self + 0xA8);
                                            
-                                           // Get the local player's vehicle entity ID dynamically
-                                           void *pedUtility = *(void **)((char *)self + 0x38);
-                                           if (isValidPointer(pedUtility)) {
-                                             void *controlledElementStorage = *(void **)((char *)pedUtility + 0x18);
-                                             if (isValidPointer(controlledElementStorage)) {
-                                               void *stashControlsEntity = *(void **)((char *)controlledElementStorage + 0x18);
-                                               if (isValidPointer(stashControlsEntity)) {
-                                                 void *controlsMap = *(void **)((char *)stashControlsEntity + 0x20);
-                                                 void *controlsData = *(void **)((char *)stashControlsEntity + 0x28);
-                                                 if (isValidPointer(controlsMap) && isValidPointer(controlsData)) {
-                                                   if (g_LocalPlayerEntityId != -1) {
-                                                      int pedSlot = -1;
-                                                      int pedEntityId = -1;
-                                                      if (fn_TryGetIndex(controlsMap, g_LocalPlayerEntityId, &pedSlot)) {
-                                                        MorpehEntity *pedEntityValPtr = (MorpehEntity *)((char *)controlsData + 0x20) + pedSlot;
-                                                        if (isValidPointer(pedEntityValPtr) && pedEntityValPtr->id_gen != 0) {
-                                                          pedEntityId = fn_Entity_get_Id(pedEntityValPtr);
-                                                        }
-                                                      }
-                                                      if (pedEntityId != -1) {
-                                                        int vehSlot = -1;
-                                                        if (fn_TryGetIndex(controlsMap, pedEntityId, &vehSlot)) {
-                                                          MorpehEntity *vehEntityValPtr = (MorpehEntity *)((char *)controlsData + 0x20) + vehSlot;
-                                                          if (isValidPointer(vehEntityValPtr) && vehEntityValPtr->id_gen != 0) {
-                                                            g_LocalPlayerVehicleEntityId = fn_Entity_get_Id(vehEntityValPtr);
-                                                          }
-                                                        }
-                                                      }
-                                                    }
-                                                 }
-                                               }
-                                             }
-                                           }
-
-                                           // Replace for ALL vehicles as requested
-                                           if (true) {
-                                             if (g_VehicleReplaceVal > 0 &&
-                                                 g_VehicleReplaceVal <
-                                                     vehicleCatalogSize) {
+                                           // Replace for all vehicles as it was in previous version
+                                           if (g_VehicleReplaceVal > 0 &&
+                                               g_VehicleReplaceVal <
+                                                   vehicleCatalogSize) {
                                                void *stashModel = *(
                                                    void **)((char *)self + 0x78);
                                                if (isValidPointer(stashModel)) {
@@ -2827,7 +2753,6 @@ static bool hook_TryGetNearVehicleSeat(void *_this, V3 position, void *vehiclesK
                                                  }
                                                }
                                              }
-                                           }
 
                                            // === VIP: Modifier les parametres
                                            // de vehicule via VehicleViewParams

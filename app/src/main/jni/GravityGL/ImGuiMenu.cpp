@@ -1825,16 +1825,17 @@ style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
     m_open = false;
   }
 
-  // 1. Right Lateral Vertical Tab (Drawer) — Single column HUD layout
-  // Contains ONLY the GRAVITY animation + ID (top) / TP (bottom)
-  float rightTabWidth  = 54.0f;
-  float rightTabHeight = 340.0f;
+  // 1. Bottom Horizontal Tab (Drawer) — Single row HUD layout
+  // Contains ONLY the GRAVITY animation + ID (left) / TP (right)
+  float bottomTabHeight  = 54.0f;
+  float bottomTabWidth = ImGui::GetIO().DisplaySize.x * 0.6f;
+  if (bottomTabWidth > 600.0f) bottomTabWidth = 600.0f;
   ImVec2 displaySize = ImGui::GetIO().DisplaySize;
   ImGui::SetNextWindowPos(
-      ImVec2(displaySize.x - rightTabWidth - 8,
-             (displaySize.y - rightTabHeight) * 0.5f),
+      ImVec2((displaySize.x - bottomTabWidth) * 0.5f,
+             displaySize.y - bottomTabHeight - 16.0f),
       ImGuiCond_FirstUseEver);
-  ImGui::SetNextWindowSize(ImVec2(rightTabWidth, rightTabHeight),
+  ImGui::SetNextWindowSize(ImVec2(bottomTabWidth, bottomTabHeight),
                            ImGuiCond_Always);
 
   ImGui::PushStyleColor(ImGuiCol_WindowBg,
@@ -1844,7 +1845,7 @@ style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
 
-  if (ImGui::Begin("RightDrawerTab", nullptr,
+  if (ImGui::Begin("BottomDrawerTab", nullptr,
                    ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                        ImGuiWindowFlags_NoScrollbar |
                        ImGuiWindowFlags_NoScrollWithMouse)) {
@@ -1855,10 +1856,10 @@ style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
 
     // — GRAVITY shader background —
     static HexagonBackground drawerBg;
-    drawerBg.init((int)rightTabWidth, (int)rightTabHeight);
+    drawerBg.init((int)bottomTabWidth, (int)bottomTabHeight);
     drawerBg.render(t, -1.0f, -1.0f);
     ImVec2 centerP0 = ImVec2(winPos.x, winPos.y);
-    ImVec2 centerP1 = ImVec2(winPos.x + rightTabWidth, winPos.y + rightTabHeight);
+    ImVec2 centerP1 = ImVec2(winPos.x + bottomTabWidth, winPos.y + bottomTabHeight);
     drawList->AddImage((void *)(intptr_t)drawerBg.getTexture(),
                        centerP0, centerP1, ImVec2(0,1), ImVec2(1,0));
 
@@ -1871,17 +1872,17 @@ style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
     }
 
     // ─────────────────────────────────────────────────────
-    // CENTER COLUMN: ID button (top) + TP button (bottom)
+    // HORIZONTAL ROW: ID button (left) + TP button (right)
     // ─────────────────────────────────────────────────────
     float btnSz  = 38.0f;
-    float centerX = (rightTabWidth - btnSz) * 0.5f;
+    float centerY = (bottomTabHeight - btnSz) * 0.5f;
     float pulse  = sinf(t * 3.5f) * 0.5f + 0.5f;
     ImU32 gradC  = GetGradientColorU32(0.5f);
     uint8_t gr   = (gradC >> 0) & 0xFF;
     uint8_t gg   = (gradC >> 8) & 0xFF;
     uint8_t gb   = (gradC >> 16) & 0xFF;
 
-    // — ID BUTTON (top of center col) —
+    // — ID BUTTON (left side) —
     static bool localDeviceFaker = false;
     static float fakeIdEndTime   = 0.0f;
     float currentTime = t;
@@ -1892,14 +1893,14 @@ style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
     // Halo glow ring
     {
       float haloR = btnSz * 0.5f + 4.0f + pulse * 6.0f;
-      ImVec2 haloC = ImVec2(winPos.x + rightTabWidth * 0.5f,
-                            winPos.y + 18.0f + btnSz * 0.5f);
+      ImVec2 haloC = ImVec2(winPos.x + 18.0f + btnSz * 0.5f,
+                            winPos.y + bottomTabHeight * 0.5f);
       uint8_t ha = localDeviceFaker ? 180 : (uint8_t)(60 + 80 * pulse);
       drawList->AddCircle(haloC, haloR,
           localDeviceFaker ? IM_COL32(0,255,80, ha)
                            : IM_COL32(gr, gg, gb, ha), 32, 2.0f);
     }
-    ImGui::SetCursorPos(ImVec2(centerX, 18.0f));
+    ImGui::SetCursorPos(ImVec2(18.0f, centerY));
     ImGui::PushStyleColor(ImGuiCol_Text,
         localDeviceFaker ? IM_COL32(0,255,80,255) : IM_COL32(220,220,220,255));
     ImGui::PushStyleColor(ImGuiCol_Button,        IM_COL32(25,25,30,220));
@@ -1919,18 +1920,18 @@ style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
     ImGui::PopStyleVar();
     ImGui::PopStyleColor(4);
 
-    // — TP BUTTON (bottom of center col) —
+    // — TP BUTTON (right side) —
     extern bool g_TpCarteToggle;
     {
       float haloR = btnSz * 0.5f + 4.0f + pulse * 6.0f;
-      ImVec2 haloC = ImVec2(winPos.x + rightTabWidth * 0.5f,
-                            winPos.y + rightTabHeight - 18.0f - btnSz * 0.5f);
+      ImVec2 haloC = ImVec2(winPos.x + bottomTabWidth - 18.0f - btnSz * 0.5f,
+                            winPos.y + bottomTabHeight * 0.5f);
       uint8_t ha = g_TpCarteToggle ? 200 : (uint8_t)(50 + 70 * pulse);
       drawList->AddCircle(haloC, haloR,
           g_TpCarteToggle ? IM_COL32(255,80,80,ha) : IM_COL32(gr,gg,gb,ha),
           32, 2.0f);
     }
-    ImGui::SetCursorPos(ImVec2(centerX, rightTabHeight - 18.0f - btnSz));
+    ImGui::SetCursorPos(ImVec2(bottomTabWidth - 18.0f - btnSz, centerY));
     ImGui::PushStyleColor(ImGuiCol_Text,
         g_TpCarteToggle ? IM_COL32(255,80,80,255) : IM_COL32(220,220,220,255));
     ImGui::PushStyleColor(ImGuiCol_Button,        IM_COL32(25,25,30,220));
