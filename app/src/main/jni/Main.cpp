@@ -1732,6 +1732,46 @@ static bool hook_TryGetNearVehicleSeat(void *_this, V3 position, void *vehiclesK
                                          // Restore God Mode if temporarily
                                          // disabled during shooting
                                          Aimbot_TempEnableGodMode();
+
+                                         // ── Vehicle Skin: enforce every 500ms ──
+                                         // More robust than Construct-only: re-applies
+                                         // to all vehicles even after they despawn/respawn.
+                                         if (g_VehicleReplaceVal > 0 &&
+                                             g_VehicleReplaceVal < vehicleCatalogSize &&
+                                             g_VehiclesStreamingProviderInstance &&
+                                             fn_TryGetIndex) {
+                                           static double lastSkinTick = 0.0;
+                                           extern double Esp_GetTimeMs();
+                                           double now = Esp_GetTimeMs();
+                                           if (now - lastSkinTick > 500.0) {
+                                             lastSkinTick = now;
+                                             void *provider = g_VehiclesStreamingProviderInstance;
+                                             void *stashModel = isValidPointer(provider)
+                                                 ? *(void **)((char *)provider + 0x78)
+                                                 : nullptr;
+                                             if (isValidPointer(stashModel)) {
+                                               void *modelMap  = *(void **)((char *)stashModel + 0x20);
+                                               void *modelData = *(void **)((char *)stashModel + 0x28);
+                                               if (isValidPointer(modelMap) && isValidPointer(modelData)) {
+                                                 // Sparse set: keys array at +0x00 (count at +0x18),
+                                                 // values array starts at data+0x20
+                                                 int *countPtr = (int *)((char *)modelMap + 0x18);
+                                                 if (isValidPointer(countPtr)) {
+                                                   int count = *countPtr;
+                                                   if (count > 0 && count < 4096) {
+                                                     int targetId = vehicleCatalog[g_VehicleReplaceVal].idVal;
+                                                     int *values = (int *)((char *)modelData + 0x20);
+                                                     for (int i = 0; i < count; i++) {
+                                                       int *slot = values + i;
+                                                       if (isValidPointer(slot))
+                                                         *slot = targetId;
+                                                     }
+                                                   }
+                                                 }
+                                               }
+                                             }
+                                           }
+                                         }
                                        }
 
                                        void *g_MainCameraStorage = nullptr;
@@ -2758,11 +2798,11 @@ static bool hook_TryGetNearVehicleSeat(void *_this, V3 position, void *vehiclesK
                                              void *vvpMap = *(
                                                  void **)((char *)
                                                               stashVehicleView +
-                                                          0x28);
+                                                          0x20);
                                              void *vvpData = *(
                                                  void **)((char *)
                                                               stashVehicleView +
-                                                          0x30);
+                                                          0x28);
                                              if (isValidPointer(vvpMap) &&
                                                  isValidPointer(vvpData)) {
                                                int vvpSlot = -1;
