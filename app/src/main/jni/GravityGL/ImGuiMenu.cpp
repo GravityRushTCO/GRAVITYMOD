@@ -704,43 +704,18 @@ extern "C" void Esp_GetGradientColor(float *r, float *g, float *b) {
 float g_GradColorB[3] = {0.5f, 0.0f, 1.0f}; // End color   (t=1)
 
 static void SaveGradientColors() {
-  char path[256];
-  // Use same data dir as texture cache -
-  // /data/data/<pkg>/files/tex_cache/../grad.cfg
-  if (!g_TexCacheDir[0])
-    return;
-  // g_TexCacheDir = .../tex_cache, go up one level
-  char dir[256];
-  snprintf(dir, sizeof(dir), "%s", g_TexCacheDir);
-  char *slash = strrchr(dir, '/');
-  if (slash)
-    *slash = '\0';
-  else
-    return;
-  snprintf(path, sizeof(path), "%s/grad.cfg", dir);
+  const char* path = "/data/data/com.onestate.global/grad.cfg";
   FILE *f = fopen(path, "wb");
-  if (!f)
-    return;
+  if (!f) return;
   fwrite(g_GradColorA, sizeof(float), 3, f);
   fwrite(g_GradColorB, sizeof(float), 3, f);
   fclose(f);
 }
 
 static void LoadGradientColors() {
-  char path[256];
-  if (!g_TexCacheDir[0])
-    return;
-  char dir[256];
-  snprintf(dir, sizeof(dir), "%s", g_TexCacheDir);
-  char *slash = strrchr(dir, '/');
-  if (slash)
-    *slash = '\0';
-  else
-    return;
-  snprintf(path, sizeof(path), "%s/grad.cfg", dir);
+  const char* path = "/data/data/com.onestate.global/grad.cfg";
   FILE *f = fopen(path, "rb");
-  if (!f)
-    return;
+  if (!f) return;
   fread(g_GradColorA, sizeof(float), 3, f);
   fread(g_GradColorB, sizeof(float), 3, f);
   fclose(f);
