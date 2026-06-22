@@ -195,6 +195,7 @@ float g_CameraFov = 60.0f;
 bool g_CameraFovEnabled = false;
 float g_AutoFollowDistance = 0.0f;
 float g_AutoFollowHeight = 3.5f;
+float g_TpTargetHeight = 2.0f;
 int g_BonePriority = 0;
 bool g_VisibilityCheck = false;
 float g_AimLockSmoothness = 2.0f;
@@ -1094,6 +1095,9 @@ static bool hook_TryGetNearVehicleSeat(void *_this, V3 position, void *vehiclesK
                                            break;
                                          case 304:
                                            Esp_TPCarToTarget();
+                                           break;
+                                         case 307:
+                                           g_TpTargetHeight = (float)intVal;
                                            break;
                                          case 305: {
                                            extern void

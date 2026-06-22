@@ -1752,7 +1752,7 @@ void ImGuiMenu::render() {
     float tgFloat = sin(time * 3.0f) * 2.0f; // Floating animation
 
     // --- Discord (Left) ---
-    const char *dcText = "Gravity MOD One State";
+    const char *dcText = "GRAVITY MOD ONESTATE";
     float dcTextWidth = ImGui::CalcTextSize(dcText).x;
     float dcX = winPos.x + 25.0f;
     float dcY = winPos.y + 18.0f + tgFloat;
@@ -1798,53 +1798,62 @@ void ImGuiMenu::render() {
 
     // (TikTok removed from header)
 
-    // --- Telegram (Right) ---
+    // --- TikTok (Right) ---
     float tcoTextWidth = ImGui::CalcTextSize("@Gravity_TCO").x;
-    float tgX = winPos.x + winSize.x - tcoTextWidth - 45.0f;
-    float tgY = winPos.y + 18.0f + tgFloat;
+    float tkX = winPos.x + winSize.x - tcoTextWidth - 45.0f;
+    float tkY = winPos.y + 18.0f + tgFloat;
 
     // Make it clickable and open URL
     ImGui::SetCursorPos(ImVec2(winSize.x - tcoTextWidth - 60.0f, 5.0f));
-    static float tgCopiedTime = 0.0f;
-    if (ImGui::InvisibleButton("TgLink", ImVec2(tcoTextWidth + 50.0f, 30.0f))) {
-      OpenURL("https://t.me/GravityTCO/1");
-      tgCopiedTime = ImGui::GetTime();
+    static float tkCopiedTime = 0.0f;
+    if (ImGui::InvisibleButton("TkLink", ImVec2(tcoTextWidth + 50.0f, 30.0f))) {
+      OpenURL("https://www.tiktok.com/@gravity_tco");
+      tkCopiedTime = ImGui::GetTime();
     }
 
-    bool tgHovered = ImGui::IsItemHovered() || (time - tgCopiedTime < 2.0f);
-    ImU32 tgBg = tgHovered
-                     ? IM_COL32(50, 180, 240, 255)
-                     : IM_COL32(34, 158, 217, 255); // Brighter on hover/click
-    dl->AddCircleFilled(ImVec2(tgX, tgY), 12.0f, tgBg, 24); // Blue circle
+    bool tkHovered = ImGui::IsItemHovered() || (time - tkCopiedTime < 2.0f);
+    ImU32 tkBg = tkHovered
+                     ? IM_COL32(30, 30, 30, 255)
+                     : IM_COL32(0, 0, 0, 255); // Black circle
+    dl->AddCircleFilled(ImVec2(tkX, tkY), 12.0f, tkBg, 24); 
 
-    // Paper plane points
-    dl->AddTriangleFilled(ImVec2(tgX - 5, tgY + 1), ImVec2(tgX + 5, tgY - 5),
-                          ImVec2(tgX - 1, tgY + 2), white);
-    dl->AddTriangleFilled(ImVec2(tgX - 1, tgY + 2), ImVec2(tgX + 5, tgY - 5),
-                          ImVec2(tgX + 3, tgY + 6), white);
-    dl->AddTriangleFilled(ImVec2(tgX - 1, tgY + 2), ImVec2(tgX + 0, tgY + 5),
-                          ImVec2(tgX + 1, tgY + 2),
-                          IM_COL32(200, 220, 240, 255));
+    // TikTok Icon (Simplified music note shape)
+    ImU32 cyanTk = IM_COL32(0, 242, 254, 255);
+    ImU32 pinkTk = IM_COL32(254, 44, 85, 255);
+    
+    // Draw the "note" shape with offset for the 3D effect
+    // Pink layer
+    dl->AddLine(ImVec2(tkX - 1, tkY - 4), ImVec2(tkX - 1, tkY + 3), pinkTk, 2.0f);
+    dl->AddLine(ImVec2(tkX - 1, tkY + 3), ImVec2(tkX - 4, tkY + 3), pinkTk, 2.0f);
+    dl->AddLine(ImVec2(tkX - 1, tkY - 4), ImVec2(tkX + 3, tkY - 4), pinkTk, 2.0f);
+    
+    // Cyan layer (offset)
+    dl->AddLine(ImVec2(tkX, tkY - 5), ImVec2(tkX, tkY + 2), cyanTk, 2.0f);
+    dl->AddLine(ImVec2(tkX, tkY + 2), ImVec2(tkX - 3, tkY + 2), cyanTk, 2.0f);
+    dl->AddLine(ImVec2(tkX, tkY - 5), ImVec2(tkX + 4, tkY - 5), cyanTk, 2.0f);
+
+    // White layer (main)
+    dl->AddLine(ImVec2(tkX - 0.5f, tkY - 4.5f), ImVec2(tkX - 0.5f, tkY + 2.5f), white, 2.0f);
+    dl->AddLine(ImVec2(tkX - 0.5f, tkY + 2.5f), ImVec2(tkX - 3.5f, tkY + 2.5f), white, 2.0f);
+    dl->AddLine(ImVec2(tkX - 0.5f, tkY - 4.5f), ImVec2(tkX + 3.5f, tkY - 4.5f), white, 2.0f);
 
     // Animated @Gravity_TCO Text
-    bool tgShowCopied = (time - tgCopiedTime < 2.0f);
-    const char *tgDispText =
-        tgShowCopied ? "Ouverture Telegram" : "@Gravity_TCO";
-    float tgCurrentX = tgX + 18.0f;
-    for (int i = 0; tgDispText[i] != '\0'; i++) {
-      char buf[2] = {tgDispText[i], 0};
+    bool tkShowCopied = (time - tkCopiedTime < 2.0f);
+    const char *tkDispText =
+        tkShowCopied ? "Ouverture TikTok" : "@Gravity_TCO";
+    float tkCurrentX = tkX + 18.0f;
+    for (int i = 0; tkDispText[i] != '\0'; i++) {
+      char buf[2] = {tkDispText[i], 0};
       float t = (float)i / 12.0f;
       float gradientPos = t - (time * 1.5f);
       gradientPos = gradientPos - floor(gradientPos);
 
-      int r = (int)(sin(gradientPos * 3.14159f) * 100);
-      int g = (int)((1.0f - gradientPos) * 200 + 55);
-      ImU32 col = IM_COL32(r, g, 255, 255);
-      if (tgHovered)
-        col = IM_COL32(255, 255, 255, 255); // Flash white when hovered
+      int r = (int)(sin(gradientPos * 3.14159f) * 127 + 128);
+      int b = (int)((1.0f - gradientPos) * 127 + 128);
+      ImU32 col = tkHovered ? IM_COL32(255, 255, 255, 255) : IM_COL32(r, 200, b, 255);
 
-      dl->AddText(ImVec2(tgCurrentX, winPos.y + 10 + tgFloat * 0.5f), col, buf);
-      tgCurrentX += ImGui::CalcTextSize(buf).x;
+      dl->AddText(ImVec2(tkCurrentX, winPos.y + 10 + tgFloat * 0.5f), col, buf);
+      tkCurrentX += ImGui::CalcTextSize(buf).x;
     }
 
     // Removed subText from here
@@ -2314,6 +2323,35 @@ void ImGuiMenu::render() {
           if (CustomSliderFloat("Distance de suivi", &followDist, 0.0f, 100.0f,
                                 "%.0f", "Distance auto-suivi", "m")) {
             TriggerChange(302, false, (int)followDist);
+          }
+        }
+      }
+      case 303: {
+        static float followHeight = 3.5f;
+        if (g_RemoteSlidersPending[303]) {
+          followHeight = g_RemoteSliders[303];
+          g_RemoteSlidersPending[303] = false;
+          TriggerChange(303, false, (int)followHeight);
+        }
+        if (IsFeatureVisible(303)) {
+          if (CustomSliderFloat("Hauteur Auto-Follow", &followHeight, -5.0f, 20.0f,
+                                "%.1f", "Hauteur du joueur en vol", "m")) {
+            TriggerChange(303, false, (int)followHeight);
+          }
+        }
+        break;
+      }
+      case 307: {
+        static float tpHeight = 2.0f;
+        if (g_RemoteSlidersPending[307]) {
+          tpHeight = g_RemoteSliders[307];
+          g_RemoteSlidersPending[307] = false;
+          TriggerChange(307, false, (int)tpHeight);
+        }
+        if (IsFeatureVisible(307)) {
+          if (CustomSliderFloat("Hauteur TP Cible", &tpHeight, -5.0f, 20.0f,
+                                "%.1f", "Hauteur du TP au-dessus", "m")) {
+            TriggerChange(307, false, (int)tpHeight);
           }
         }
         break;
@@ -2790,6 +2828,9 @@ void ImGuiMenu::render() {
       } else {
         // Fallback rendering
         if (physicalTab == 0) {
+          ImGui::Columns(2, "AimbotCols", false);
+          ImGui::SetColumnWidth(0, ImGui::GetWindowWidth() * 0.55f);
+          
           CenterText(GetGradientColorU32(0.3f), "AIMBOT & ASSISTANCE");
           ImGui::Dummy(ImVec2(0, 5));
           RenderFeature(120); // Activer Aimbot
@@ -2797,11 +2838,18 @@ void ImGuiMenu::render() {
           RenderFeature(184); // Verification de visibilite
           RenderFeature(185); // Lissage de visee (Force)
           RenderFeature(183); // Os cible
+          
+          ImGui::NextColumn();
+          CenterText(GetGradientColorU32(0.6f), "CIBLE & AUTO-FOLLOW");
+          ImGui::Dummy(ImVec2(0, 5));
           RenderFeature(300); // Suivre Joueur/Voiture Auto
           RenderFeature(306); // Coller Voiture (Sticky Car)
           RenderFeature(302); // Distance de suivi
+          RenderFeature(303); // Hauteur Auto-Follow
           RenderFeature(305); // Changer Cible
           RenderFeature(304); // TP Voiture vers Cible
+          RenderFeature(307); // Hauteur TP Cible
+          ImGui::Columns(1);
         } else if (physicalTab == 1) {
           CenterText(GetGradientColorU32(0.5f), "ESP & VISUELS");
           ImGui::Dummy(ImVec2(0, 5));

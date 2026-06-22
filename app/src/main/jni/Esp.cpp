@@ -2,7 +2,6 @@
 #include "Aimbot.h"
 #include "GravityGL/Offsets.h"
 
-
 #include "Dobby/dobby.h"
 #include "GraffitiTags.h" // 144 coordonnées extraites du minimap
 #include "GravityGL/Offsets.h"
@@ -24,7 +23,6 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-
 
 extern "C" void SetGodModePatchesState(bool enabled);
 
@@ -262,7 +260,7 @@ static bool s_crosshairEnabled = false;
 static bool s_crosshairCircleEnabled = false;
 static int s_crosshairCircleRadius = 50;
 static bool s_healthEnabled = false;
-static bool s_skeletonEnabled = false;  // bone skeleton ESP
+static bool s_skeletonEnabled = false; // bone skeleton ESP
 static uintptr_t s_libBase = 0;
 
 // === Teleport state ===
@@ -282,7 +280,6 @@ static Object_op_Implicit_t fn_Object_op_Implicit = nullptr;
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
-
 
 // ============================================================
 // FAST RANGE MEMORY VALIDATION via /proc/self/mem & mincore()
@@ -571,16 +568,57 @@ static void resolveLazy() {
 void Esp_NotifyLocalActor(void *ca) {
   if (!ca || !IsUnityObjectAlive(ca))
     return;
-
-  // We are fed this from CharacterActor pre-simulation.
-  // We grab it directly without camera distance checks, as the camera method is flawed.
-  if (s_localActor != ca) {
-    pthread_mutex_lock(&s_mtx);
-    s_localActor = ca;
-    E_LOGI("LocalActor identified directly: %p", ca);
-    pthread_mutex_unlock(&s_mtx);
+  if (s_localActor == ca) {
+    s_lastLocalActorNotifyMs = nowMs();
+    return;
   }
-  s_lastLocalActorNotifyMs = nowMs();
+
+  resolveLazy();
+  if (fn_get_transform && fn_get_position) {
+    void *tr = fn_get_transform(ca);
+    if (tr) {
+      V3 pos = {0, 0, 0};
+      fn_get_position(tr, &pos);
+      if (s_camValid) {
+        float dx = pos.x - s_camPos.x;
+        float dy = pos.y - s_camPos.y;
+        float dz = pos.z - s_camPos.z;
+        float distSq = dx * dx + dy * dy + dz * dz;
+        // Local player is always extremely close to the camera (now relaxed to
+        // 40m to allow zoomed out / driving)
+        if (distSq < 1600.0f) {
+          pthread_mutex_lock(&s_mtx);
+          bool shouldUpdate = false;
+          if (!s_localActor) {
+            shouldUpdate = true;
+          } else {
+            void *currTr = fn_get_transform(s_localActor);
+            if (currTr) {
+              V3 currPos = {0, 0, 0};
+              fn_get_position(currTr, &currPos);
+              float cdx = currPos.x - s_camPos.x;
+              float cdy = currPos.y - s_camPos.y;
+              float cdz = currPos.z - s_camPos.z;
+              float currDistSq = cdx * cdx + cdy * cdy + cdz * cdz;
+              if (distSq < currDistSq) {
+                shouldUpdate = true;
+              }
+            } else {
+              shouldUpdate = true;
+            }
+          }
+          if (shouldUpdate) {
+            E_LOGI("LocalActor identified via PreSimulationUpdate (Camera dist "
+                   "%.1fm): %p",
+                   sqrtf(distSq), ca);
+            s_localActor = ca;
+            s_lastLocalActorNotifyMs = nowMs();
+          }
+          pthread_mutex_unlock(&s_mtx);
+        }
+      }
+    }
+  }
 }
 
 static bool readActorPosition(void *actor, V3 *out) {
@@ -1254,7 +1292,8 @@ void Esp_FrameTick() {
         float dy = pPos.y - s_teleportSpamPos.y;
         float dz = pPos.z - s_teleportSpamPos.z;
         float distSq = dx * dx + dy * dy + dz * dz;
-        // Only allow height adjustments if we have arrived near target (prevents snapping back to old position)
+        // Only allow height adjustments if we have arrived near target
+        // (prevents snapping back to old position)
         if (distSq < 100.0f) {
           if (abs(pPos.y - s_teleportSpamPos.y) > 0.1f) {
             s_teleportSpamPos = pPos;
@@ -1544,41 +1583,56 @@ void Esp_FrameTick() {
     pthread_mutex_unlock(&g_SnifferMtx);
 
     if (s_skeletonEnabled) {
-      typedef void *(*Component_GetComponentString_t)(void *self, void *typeString, void *method);
+      typedef void *(*Component_GetComponentString_t)(
+          void *self, void *typeString, void *method);
       static Component_GetComponentString_t fn_GetComponentString = nullptr;
-      if (!fn_GetComponentString && s_libBase && RVA_GetComponentString != 0x0) {
-        fn_GetComponentString = (Component_GetComponentString_t)(s_libBase + RVA_GetComponentString);
+      if (!fn_GetComponentString && s_libBase &&
+          RVA_GetComponentString != 0x0) {
+        fn_GetComponentString =
+            (Component_GetComponentString_t)(s_libBase +
+                                             RVA_GetComponentString);
       }
-      
-      typedef void *(*Animator_GetBoneTransformInternal_t)(void *self, int humanBoneId);
+
+      typedef void *(*Animator_GetBoneTransformInternal_t)(void *self,
+                                                           int humanBoneId);
       static Animator_GetBoneTransformInternal_t fn_GetBoneTransform = nullptr;
-      if (!fn_GetBoneTransform && s_libBase && RVA_Animator_GetBoneTransformInternal != 0) {
-        fn_GetBoneTransform = (Animator_GetBoneTransformInternal_t)(s_libBase + RVA_Animator_GetBoneTransformInternal);
+      if (!fn_GetBoneTransform && s_libBase &&
+          RVA_Animator_GetBoneTransformInternal != 0) {
+        fn_GetBoneTransform =
+            (Animator_GetBoneTransformInternal_t)(s_libBase +
+                                                  RVA_Animator_GetBoneTransformInternal);
       }
 
-      static void* s_animatorStr = nullptr;
-      if (!s_animatorStr && g_il2cpp.ready) s_animatorStr = g_il2cpp.string_new("Animator");
+      static void *s_animatorStr = nullptr;
+      if (!s_animatorStr && g_il2cpp.ready)
+        s_animatorStr = g_il2cpp.string_new("Animator");
 
-      if (fn_GetComponentString && fn_GetBoneTransform && s_animatorStr && fn_get_position) {
-        void *animator = fn_GetComponentString(actors[i], s_animatorStr, nullptr);
-        
-        // Fallback: If Animator isn't on the CharacterActor directly, try the root.
-        if (!animator && fn_get_transform && s_libBase && RVA_Transform_GetRoot != 0x0) {
-           void* actorTr = fn_get_transform(actors[i]);
-           if (actorTr) {
-               typedef void *(*Transform_get_root_t)(void *, void *);
-               static Transform_get_root_t fn_gr = (Transform_get_root_t)(s_libBase + RVA_Transform_GetRoot);
-               void* rootTr = fn_gr(actorTr, nullptr);
-               if (rootTr && rootTr != actorTr) {
-                   animator = fn_GetComponentString(rootTr, s_animatorStr, nullptr);
-               }
-           }
+      if (fn_GetComponentString && fn_GetBoneTransform && s_animatorStr &&
+          fn_get_position) {
+        void *animator =
+            fn_GetComponentString(actors[i], s_animatorStr, nullptr);
+
+        // Fallback: If Animator isn't on the CharacterActor directly, try the
+        // root.
+        if (!animator && fn_get_transform && s_libBase &&
+            RVA_Transform_GetRoot != 0x0) {
+          void *actorTr = fn_get_transform(actors[i]);
+          if (actorTr) {
+            typedef void *(*Transform_get_root_t)(void *, void *);
+            static Transform_get_root_t fn_gr =
+                (Transform_get_root_t)(s_libBase + RVA_Transform_GetRoot);
+            void *rootTr = fn_gr(actorTr, nullptr);
+            if (rootTr && rootTr != actorTr) {
+              animator = fn_GetComponentString(rootTr, s_animatorStr, nullptr);
+            }
+          }
         }
 
         if (animator) {
-          static const int BONES[16] = {10, 9, 7, 0, 13, 15, 17, 14, 16, 18, 1, 3, 5, 2, 4, 6};
+          static const int BONES[16] = {10, 9,  7, 0, 13, 15, 17, 14,
+                                        16, 18, 1, 3, 5,  2,  4,  6};
           for (int b = 0; b < 16; b++) {
-            void* boneTr = fn_GetBoneTransform(animator, BONES[b]);
+            void *boneTr = fn_GetBoneTransform(animator, BONES[b]);
             if (boneTr) {
               V3 bPos = {0, 0, 0};
               fn_get_position(boneTr, &bPos);
@@ -1586,7 +1640,9 @@ void Esp_FrameTick() {
               e.bones[b][1] = bPos.y;
               e.bones[b][2] = bPos.z;
             } else {
-              e.bones[b][0] = 0; e.bones[b][1] = 0; e.bones[b][2] = 0;
+              e.bones[b][0] = 0;
+              e.bones[b][1] = 0;
+              e.bones[b][2] = 0;
             }
           }
         }
@@ -1622,7 +1678,7 @@ void Esp_FrameTick() {
   }
   pthread_mutex_lock(&s_mtx);
   s_snapshot = std::move(out);
-  if (localIdx >= 0 && localIdx < (int)actors.size()) {
+  if (localIdx >= 0 && localIdx < (int)actors.size() && minDist < 5.0f) {
     if (s_localActor != actors[localIdx]) {
       E_LOGI("Teleport-ready: s_localActor updated via scan = %p (was %p, "
              "dist=%.1f)",
@@ -2213,8 +2269,9 @@ bool Teleport_ToPosition(float x, float y, float z, bool ignoreCooldown) {
   if (vehToTp) {
     g_LastLocalVehicle = vehToTp;
 
-    // Teleport the vehicle directly with a slight height offset to avoid clipping into the ground
-    // Do NOT call fn_teleport on the player while inside the car, it will eject or glitch them!
+    // Teleport the vehicle directly with a slight height offset to avoid
+    // clipping into the ground Do NOT call fn_teleport on the player while
+    // inside the car, it will eject or glitch them!
     float safeY = y + 2.0f;
     Esp_DirectVehicleTP(vehToTp, x, safeY, z, true);
 
@@ -2239,17 +2296,18 @@ bool Teleport_ToPosition(float x, float y, float z, bool ignoreCooldown) {
     // Player is outside the vehicle. Teleport player first!
     extern bool g_NoClipEnabled;
     extern bool g_FlyEnabled;
-    if (g_NoClipEnabled || g_FlyEnabled) {
+    extern bool Esp_IsAutoFollowActive();
+    if (g_NoClipEnabled || g_FlyEnabled || Esp_IsAutoFollowActive()) {
       Esp_DirectVehicleTP(actorTr, x, y, z, false);
-      E_LOGI("Teleport_ToPosition: Player TP via DirectTransform (NoClip/Fly) OK");
+      E_LOGI(
+          "Teleport_ToPosition: Player TP via DirectTransform (NoClip/Fly/AutoFollow) OK");
     } else {
-      Esp_DirectVehicleTP(actorTr, x, y, z, false);
       if (fn_teleport) {
         fn_teleport(actor, x, y, z);
       } else if (fn_sweep_tp) {
         fn_sweep_tp(actor, x, y, z);
       }
-      E_LOGI("Teleport_ToPosition: Player TP via Direct + Teleport/Sweep OK");
+      E_LOGI("Teleport_ToPosition: Player TP via Teleport/Sweep OK");
     }
 
     // Now get the true grounded position of the player
@@ -2520,7 +2578,7 @@ jfloatArray Java_com_android_support_EspBridge_getData(JNIEnv *env, jclass) {
     tmp[o + 2] = snap[i].worldZ;
     tmp[o + 3] = snap[i].distance;
     tmp[o + 4] = snap[i].isLocal ? 1.0f : 0.0f;
-    
+
     // Copy 16 bones * 3 floats
     for (int b = 0; b < 16; b++) {
       tmp[o + 5 + b * 3 + 0] = snap[i].bones[b][0];
@@ -2615,7 +2673,8 @@ jint Java_com_android_support_EspBridge_getCrosshairCircleRadius(JNIEnv *,
 jboolean Java_com_android_support_EspBridge_isHealthEnabled(JNIEnv *, jclass) {
   return s_healthEnabled;
 }
-jboolean Java_com_android_support_EspBridge_isSkeletonEnabled(JNIEnv *, jclass) {
+jboolean Java_com_android_support_EspBridge_isSkeletonEnabled(JNIEnv *,
+                                                              jclass) {
   return s_skeletonEnabled;
 }
 
@@ -2662,8 +2721,9 @@ extern "C" void Esp_TPCarToTarget() {
       static Transform_SetParent_t fn_SetParent = nullptr;
       if (!fn_SetParent && s_libBase) {
         fn_SetParent =
-            (Transform_SetParent_t)(s_libBase + 0x4306594); // Transform.SetParent(Transform
-                                                            // parent)
+            (Transform_SetParent_t)(s_libBase +
+                                    0x4306594); // Transform.SetParent(Transform
+                                                // parent)
       }
       if (fn_SetParent) {
         fn_SetParent(actorTr, nullptr);
@@ -2819,7 +2879,7 @@ extern "C" void Esp_CaptureCameraMatrix(void *cam) {
     s_camPixH = pixH;
   }
   s_vpValid = true;
-  
+
   // Extract camera position from inverse view matrix
   // Pos = -(R^T * T) where T is translation vector
   float tx = view.m[12];
