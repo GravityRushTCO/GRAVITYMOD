@@ -53,11 +53,8 @@ bool DownloadFileJNI(const std::string& urlStr, const std::string& outPath) {
             jclass connClass = env->GetObjectClass(connObj);
             jmethodID setConnTimeout = env->GetMethodID(connClass, "setConnectTimeout", "(I)V");
             jmethodID setReadTimeout  = env->GetMethodID(connClass, "setReadTimeout", "(I)V");
-            jmethodID setUseCaches = env->GetMethodID(connClass, "setUseCaches", "(Z)V");
             if (setConnTimeout) env->CallVoidMethod(connObj, setConnTimeout, 15000);
             if (setReadTimeout) env->CallVoidMethod(connObj, setReadTimeout, 15000);
-            if (setUseCaches) env->CallVoidMethod(connObj, setUseCaches, JNI_FALSE);
-            if (env->ExceptionCheck()) { env->ExceptionDescribe(); env->ExceptionClear(); }
 
             jmethodID getRespCode = env->GetMethodID(connClass, "getResponseCode", "()I");
             int respCode = getRespCode ? env->CallIntMethod(connObj, getRespCode) : 0;
@@ -112,13 +109,6 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     g_jvm = vm;
     LOGI("ModLoader JNI_OnLoad called.");
     
-    // Check for fake ID reset marker
-    if (access("/data/data/com.onestate.global/reset_pending", F_OK) == 0) {
-        LOGI("Fake ID was active on close. Resetting PlayerPrefs...");
-        system("rm -rf /data/data/com.onestate.global/shared_prefs/*");
-        remove("/data/data/com.onestate.global/reset_pending");
-    }
-    
     std::string filesDir = GetAppDataDir();
     if (filesDir.empty()) {
         LOGE("Could not determine app data dir");
@@ -129,8 +119,6 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     // GitHub Raw URL for free, reliable hosting. 
     // To update your mod, simply replace 'libCore.so' in the 'Update' folder on GitHub.
     std::string serverUrl = "https://raw.githubusercontent.com/GravityRushTCO/GRAVITYMOD/main/Update/libCore.so"; 
-    // Anti-cache CDN Github
-    serverUrl += "?v=" + std::to_string(time(nullptr));
 
     // If payload does not exist, we MUST block and download it now so JNI can register methods
     if (access(payloadPath.c_str(), R_OK) != 0) {
