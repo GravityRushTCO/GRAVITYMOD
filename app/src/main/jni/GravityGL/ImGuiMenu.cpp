@@ -2,10 +2,10 @@
 #include "../BuildVersion.h"
 #include "../HttpUtils.h"
 #include "../Hwid.h"
-#include "../LicenseSystem.h"
 #include "../Includes/Logger.h"
-#include "../imgui/imgui.h"
 #include "../Includes/obfuscate.h"
+#include "../LicenseSystem.h"
+#include "../imgui/imgui.h"
 #include "../json.hpp"
 #include "Catalog.h"
 #include "Esp.h"
@@ -18,7 +18,6 @@
 #include <thread>
 #include <unistd.h>
 
-
 struct TeleportPoint {
   const char *name;
   float x, y, z;
@@ -27,46 +26,285 @@ struct TeleportPoint {
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
-#include <vector>
 #include <string.h>
+#include <vector>
+
 
 int g_MenuLanguage = 0; // 0=FR, 1=EN, 2=AR, 3=ES
-const char* TR(const char* fr) {
-    if (strcmp(fr, "Activer Aimbot") == 0) { if (g_MenuLanguage==1) return "Enable Aimbot"; if (g_MenuLanguage==2) return "تفعيل التصويب"; if (g_MenuLanguage==3) return "Activar Aimbot"; }
-    if (strcmp(fr, "Tirer a travers les murs") == 0) { if (g_MenuLanguage==1) return "Wallbang"; if (g_MenuLanguage==2) return "التصويب عبر الجدران"; if (g_MenuLanguage==3) return "Disparar a través de las paredes"; }
-    if (strcmp(fr, "Verification de visibilite") == 0) { if (g_MenuLanguage==1) return "Visibility Check"; if (g_MenuLanguage==2) return "التحقق من الرؤية"; if (g_MenuLanguage==3) return "Verificar visibilidad"; }
-    if (strcmp(fr, "Lissage de visee") == 0) { if (g_MenuLanguage==1) return "Aim Smoothing"; if (g_MenuLanguage==2) return "تنعيم التصويب"; if (g_MenuLanguage==3) return "Suavizado de apuntado"; }
-    if (strcmp(fr, "Os cible") == 0) { if (g_MenuLanguage==1) return "Target Bone"; if (g_MenuLanguage==2) return "عظم الهدف"; if (g_MenuLanguage==3) return "Hueso objetivo"; }
-    if (strcmp(fr, "Suivre Joueur / Voiture Auto") == 0) { if (g_MenuLanguage==1) return "Auto-Follow Target"; if (g_MenuLanguage==2) return "متابعة تلقائية للهدف"; if (g_MenuLanguage==3) return "Seguir objetivo automáticamente"; }
-    if (strcmp(fr, "Distance de suivi") == 0) { if (g_MenuLanguage==1) return "Follow Distance"; if (g_MenuLanguage==2) return "مسافة المتابعة"; if (g_MenuLanguage==3) return "Distancia de seguimiento"; }
-    if (strcmp(fr, "Hauteur Auto-Follow") == 0) { if (g_MenuLanguage==1) return "Auto-Follow Height"; if (g_MenuLanguage==2) return "ارتفاع المتابعة"; if (g_MenuLanguage==3) return "Altura de seguimiento"; }
-    if (strcmp(fr, "Changer Cible Actuelle") == 0) { if (g_MenuLanguage==1) return "Change Target"; if (g_MenuLanguage==2) return "تغيير الهدف"; if (g_MenuLanguage==3) return "Cambiar objetivo"; }
-    if (strcmp(fr, "TP Voiture vers Cible") == 0) { if (g_MenuLanguage==1) return "TP Car to Target"; if (g_MenuLanguage==2) return "انتقال السيارة للهدف"; if (g_MenuLanguage==3) return "Teletransporte de coche a objetivo"; }
-    if (strcmp(fr, "Hauteur TP Cible") == 0) { if (g_MenuLanguage==1) return "TP Target Height"; if (g_MenuLanguage==2) return "ارتفاع انتقال الهدف"; if (g_MenuLanguage==3) return "Altura de teletransporte"; }
-    if (strcmp(fr, "Coller Voiture sur Cible") == 0) { if (g_MenuLanguage==1) return "Sticky Car"; if (g_MenuLanguage==2) return "لصق السيارة"; if (g_MenuLanguage==3) return "Coche pegajoso"; }
-    if (strcmp(fr, "Activer ESP") == 0) { if (g_MenuLanguage==1) return "Enable ESP"; if (g_MenuLanguage==2) return "تفعيل الكشف"; if (g_MenuLanguage==3) return "Activar ESP"; }
-    if (strcmp(fr, "Lignes") == 0) { if (g_MenuLanguage==1) return "Lines"; if (g_MenuLanguage==2) return "خطوط"; if (g_MenuLanguage==3) return "Líneas"; }
-    if (strcmp(fr, "Boites") == 0) { if (g_MenuLanguage==1) return "Boxes"; if (g_MenuLanguage==2) return "صناديق"; if (g_MenuLanguage==3) return "Cajas"; }
-    if (strcmp(fr, "Distance") == 0) { if (g_MenuLanguage==1) return "Distance"; if (g_MenuLanguage==2) return "مسافة"; if (g_MenuLanguage==3) return "Distancia"; }
-    if (strcmp(fr, "Sante") == 0) { if (g_MenuLanguage==1) return "Health"; if (g_MenuLanguage==2) return "صحة"; if (g_MenuLanguage==3) return "Salud"; }
-    if (strcmp(fr, "Noms") == 0) { if (g_MenuLanguage==1) return "Names"; if (g_MenuLanguage==2) return "أسماء"; if (g_MenuLanguage==3) return "Nombres"; }
-    if (strcmp(fr, "Squelette") == 0) { if (g_MenuLanguage==1) return "Skeleton"; if (g_MenuLanguage==2) return "هيكل عظمي"; if (g_MenuLanguage==3) return "Esqueleto"; }
-    if (strcmp(fr, "Viseur") == 0) { if (g_MenuLanguage==1) return "Crosshair"; if (g_MenuLanguage==2) return "مؤشر التصويب"; if (g_MenuLanguage==3) return "Punto de mira"; }
-    if (strcmp(fr, "Afficher Cercle FOV") == 0) { if (g_MenuLanguage==1) return "Show FOV Circle"; if (g_MenuLanguage==2) return "إظهار دائرة الرؤية"; if (g_MenuLanguage==3) return "Mostrar círculo FOV"; }
-    if (strcmp(fr, "Rayon Zone FOV Aimbot") == 0) { if (g_MenuLanguage==1) return "Aimbot FOV Radius"; if (g_MenuLanguage==2) return "نصف قطر الرؤية"; if (g_MenuLanguage==3) return "Radio FOV Aimbot"; }
-    if (strcmp(fr, "Rayon Cercle FOV") == 0) { if (g_MenuLanguage==1) return "FOV Circle Radius"; if (g_MenuLanguage==2) return "نصف قطر دائرة الرؤية"; if (g_MenuLanguage==3) return "Radio de círculo FOV"; }
-    if (strcmp(fr, "Champ de vision") == 0) { if (g_MenuLanguage==1) return "Field of View"; if (g_MenuLanguage==2) return "مجال الرؤية"; if (g_MenuLanguage==3) return "Campo de visión"; }
-    if (strcmp(fr, "NoClip Joueur & Voiture") == 0) { if (g_MenuLanguage==1) return "NoClip Player & Car"; if (g_MenuLanguage==2) return "اختراق الجدران"; if (g_MenuLanguage==3) return "NoClip Jugador y Coche"; }
-    if (strcmp(fr, "Vol Libre (Fly Mode)") == 0) { if (g_MenuLanguage==1) return "Fly Mode"; if (g_MenuLanguage==2) return "طيران"; if (g_MenuLanguage==3) return "Modo de vuelo"; }
-    if (strcmp(fr, "Vitesse Joueur (Speed Multiplier)") == 0) { if (g_MenuLanguage==1) return "Player Speed (Multiplier)"; if (g_MenuLanguage==2) return "سرعة اللاعب"; if (g_MenuLanguage==3) return "Velocidad del jugador"; }
-    if (strcmp(fr, "AimLock (Camera)") == 0) { if (g_MenuLanguage==1) return "AimLock (Camera)"; if (g_MenuLanguage==2) return "قفل التصويب (كاميرا)"; if (g_MenuLanguage==3) return "Bloqueo de apuntado (Cámara)"; }
-    if (strcmp(fr, "Faux ID Telephone") == 0) { if (g_MenuLanguage==1) return "Fake Phone ID"; if (g_MenuLanguage==2) return "رقم هاتف مزيف"; if (g_MenuLanguage==3) return "ID de teléfono falso"; }
-    if (strcmp(fr, "Delai Rapatriement (sec)") == 0) { if (g_MenuLanguage==1) return "Gather Delay (sec)"; if (g_MenuLanguage==2) return "تأخير التجميع"; if (g_MenuLanguage==3) return "Retraso de recolección"; }
-    if (strcmp(fr, "AIMBOT & ASSISTANCE") == 0) { if (g_MenuLanguage==1) return "AIMBOT & ASSIST"; if (g_MenuLanguage==2) return "مساعدة وتصويب"; if (g_MenuLanguage==3) return "AIMBOT Y ASISTENCIA"; }
-    if (strcmp(fr, "CIBLE & AUTO-FOLLOW") == 0) { if (g_MenuLanguage==1) return "TARGET & FOLLOW"; if (g_MenuLanguage==2) return "هدف ومتابعة"; if (g_MenuLanguage==3) return "OBJETIVO Y SEGUIMIENTO"; }
-    if (strcmp(fr, "ESP & VISUELS") == 0) { if (g_MenuLanguage==1) return "ESP & VISUALS"; if (g_MenuLanguage==2) return "كشف ورؤية"; if (g_MenuLanguage==3) return "ESP Y VISUALES"; }
-    if (strcmp(fr, "MONDE & DIVERS") == 0) { if (g_MenuLanguage==1) return "WORLD & MISC"; if (g_MenuLanguage==2) return "عالم ومتنوعات"; if (g_MenuLanguage==3) return "MUNDO Y VARIOS"; }
-    return fr;
+const char *TR(const char *fr) {
+  if (strcmp(fr, "Activer Aimbot") == 0) {
+    if (g_MenuLanguage == 1)
+      return "Enable Aimbot";
+    if (g_MenuLanguage == 2)
+      return "تفعيل التصويب";
+    if (g_MenuLanguage == 3)
+      return "Activar Aimbot";
+  }
+  if (strcmp(fr, "Tirer a travers les murs") == 0) {
+    if (g_MenuLanguage == 1)
+      return "Wallbang";
+    if (g_MenuLanguage == 2)
+      return "التصويب عبر الجدران";
+    if (g_MenuLanguage == 3)
+      return "Disparar a través de las paredes";
+  }
+  if (strcmp(fr, "Verification de visibilite") == 0) {
+    if (g_MenuLanguage == 1)
+      return "Visibility Check";
+    if (g_MenuLanguage == 2)
+      return "التحقق من الرؤية";
+    if (g_MenuLanguage == 3)
+      return "Verificar visibilidad";
+  }
+  if (strcmp(fr, "Lissage de visee") == 0) {
+    if (g_MenuLanguage == 1)
+      return "Aim Smoothing";
+    if (g_MenuLanguage == 2)
+      return "تنعيم التصويب";
+    if (g_MenuLanguage == 3)
+      return "Suavizado de apuntado";
+  }
+  if (strcmp(fr, "Os cible") == 0) {
+    if (g_MenuLanguage == 1)
+      return "Target Bone";
+    if (g_MenuLanguage == 2)
+      return "عظم الهدف";
+    if (g_MenuLanguage == 3)
+      return "Hueso objetivo";
+  }
+  if (strcmp(fr, "Suivre Joueur / Voiture Auto") == 0) {
+    if (g_MenuLanguage == 1)
+      return "Auto-Follow Target";
+    if (g_MenuLanguage == 2)
+      return "متابعة تلقائية للهدف";
+    if (g_MenuLanguage == 3)
+      return "Seguir objetivo automáticamente";
+  }
+  if (strcmp(fr, "Distance de suivi") == 0) {
+    if (g_MenuLanguage == 1)
+      return "Follow Distance";
+    if (g_MenuLanguage == 2)
+      return "مسافة المتابعة";
+    if (g_MenuLanguage == 3)
+      return "Distancia de seguimiento";
+  }
+  if (strcmp(fr, "Hauteur Auto-Follow") == 0) {
+    if (g_MenuLanguage == 1)
+      return "Auto-Follow Height";
+    if (g_MenuLanguage == 2)
+      return "ارتفاع المتابعة";
+    if (g_MenuLanguage == 3)
+      return "Altura de seguimiento";
+  }
+  if (strcmp(fr, "Changer Cible Actuelle") == 0) {
+    if (g_MenuLanguage == 1)
+      return "Change Target";
+    if (g_MenuLanguage == 2)
+      return "تغيير الهدف";
+    if (g_MenuLanguage == 3)
+      return "Cambiar objetivo";
+  }
+  if (strcmp(fr, "TP Voiture vers Cible") == 0) {
+    if (g_MenuLanguage == 1)
+      return "TP Car to Target";
+    if (g_MenuLanguage == 2)
+      return "انتقال السيارة للهدف";
+    if (g_MenuLanguage == 3)
+      return "Teletransporte de coche a objetivo";
+  }
+  if (strcmp(fr, "Hauteur TP Cible") == 0) {
+    if (g_MenuLanguage == 1)
+      return "TP Target Height";
+    if (g_MenuLanguage == 2)
+      return "ارتفاع انتقال الهدف";
+    if (g_MenuLanguage == 3)
+      return "Altura de teletransporte";
+  }
+  if (strcmp(fr, "Coller Voiture sur Cible") == 0) {
+    if (g_MenuLanguage == 1)
+      return "Sticky Car";
+    if (g_MenuLanguage == 2)
+      return "لصق السيارة";
+    if (g_MenuLanguage == 3)
+      return "Coche pegajoso";
+  }
+  if (strcmp(fr, "Activer ESP") == 0) {
+    if (g_MenuLanguage == 1)
+      return "Enable ESP";
+    if (g_MenuLanguage == 2)
+      return "تفعيل الكشف";
+    if (g_MenuLanguage == 3)
+      return "Activar ESP";
+  }
+  if (strcmp(fr, "Lignes") == 0) {
+    if (g_MenuLanguage == 1)
+      return "Lines";
+    if (g_MenuLanguage == 2)
+      return "خطوط";
+    if (g_MenuLanguage == 3)
+      return "Líneas";
+  }
+  if (strcmp(fr, "Boites") == 0) {
+    if (g_MenuLanguage == 1)
+      return "Boxes";
+    if (g_MenuLanguage == 2)
+      return "صناديق";
+    if (g_MenuLanguage == 3)
+      return "Cajas";
+  }
+  if (strcmp(fr, "Distance") == 0) {
+    if (g_MenuLanguage == 1)
+      return "Distance";
+    if (g_MenuLanguage == 2)
+      return "مسافة";
+    if (g_MenuLanguage == 3)
+      return "Distancia";
+  }
+  if (strcmp(fr, "Sante") == 0) {
+    if (g_MenuLanguage == 1)
+      return "Health";
+    if (g_MenuLanguage == 2)
+      return "صحة";
+    if (g_MenuLanguage == 3)
+      return "Salud";
+  }
+  if (strcmp(fr, "Noms") == 0) {
+    if (g_MenuLanguage == 1)
+      return "Names";
+    if (g_MenuLanguage == 2)
+      return "أسماء";
+    if (g_MenuLanguage == 3)
+      return "Nombres";
+  }
+  if (strcmp(fr, "Squelette") == 0) {
+    if (g_MenuLanguage == 1)
+      return "Skeleton";
+    if (g_MenuLanguage == 2)
+      return "هيكل عظمي";
+    if (g_MenuLanguage == 3)
+      return "Esqueleto";
+  }
+  if (strcmp(fr, "Viseur") == 0) {
+    if (g_MenuLanguage == 1)
+      return "Crosshair";
+    if (g_MenuLanguage == 2)
+      return "مؤشر التصويب";
+    if (g_MenuLanguage == 3)
+      return "Punto de mira";
+  }
+  if (strcmp(fr, "Afficher Cercle FOV") == 0) {
+    if (g_MenuLanguage == 1)
+      return "Show FOV Circle";
+    if (g_MenuLanguage == 2)
+      return "إظهار دائرة الرؤية";
+    if (g_MenuLanguage == 3)
+      return "Mostrar círculo FOV";
+  }
+  if (strcmp(fr, "Rayon Zone FOV Aimbot") == 0) {
+    if (g_MenuLanguage == 1)
+      return "Aimbot FOV Radius";
+    if (g_MenuLanguage == 2)
+      return "نصف قطر الرؤية";
+    if (g_MenuLanguage == 3)
+      return "Radio FOV Aimbot";
+  }
+  if (strcmp(fr, "Rayon Cercle FOV") == 0) {
+    if (g_MenuLanguage == 1)
+      return "FOV Circle Radius";
+    if (g_MenuLanguage == 2)
+      return "نصف قطر دائرة الرؤية";
+    if (g_MenuLanguage == 3)
+      return "Radio de círculo FOV";
+  }
+  if (strcmp(fr, "Champ de vision") == 0) {
+    if (g_MenuLanguage == 1)
+      return "Field of View";
+    if (g_MenuLanguage == 2)
+      return "مجال الرؤية";
+    if (g_MenuLanguage == 3)
+      return "Campo de visión";
+  }
+  if (strcmp(fr, "NoClip Joueur & Voiture") == 0) {
+    if (g_MenuLanguage == 1)
+      return "NoClip Player & Car";
+    if (g_MenuLanguage == 2)
+      return "اختراق الجدران";
+    if (g_MenuLanguage == 3)
+      return "NoClip Jugador y Coche";
+  }
+  if (strcmp(fr, "Vol Libre (Fly Mode)") == 0) {
+    if (g_MenuLanguage == 1)
+      return "Fly Mode";
+    if (g_MenuLanguage == 2)
+      return "طيران";
+    if (g_MenuLanguage == 3)
+      return "Modo de vuelo";
+  }
+  if (strcmp(fr, "Vitesse Joueur (Speed Multiplier)") == 0) {
+    if (g_MenuLanguage == 1)
+      return "Player Speed (Multiplier)";
+    if (g_MenuLanguage == 2)
+      return "سرعة اللاعب";
+    if (g_MenuLanguage == 3)
+      return "Velocidad del jugador";
+  }
+  if (strcmp(fr, "AimLock (Camera)") == 0) {
+    if (g_MenuLanguage == 1)
+      return "AimLock (Camera)";
+    if (g_MenuLanguage == 2)
+      return "قفل التصويب (كاميرا)";
+    if (g_MenuLanguage == 3)
+      return "Bloqueo de apuntado (Cámara)";
+  }
+  if (strcmp(fr, "Faux ID Telephone") == 0) {
+    if (g_MenuLanguage == 1)
+      return "Fake Phone ID";
+    if (g_MenuLanguage == 2)
+      return "رقم هاتف مزيف";
+    if (g_MenuLanguage == 3)
+      return "ID de teléfono falso";
+  }
+  if (strcmp(fr, "Delai Rapatriement (sec)") == 0) {
+    if (g_MenuLanguage == 1)
+      return "Gather Delay (sec)";
+    if (g_MenuLanguage == 2)
+      return "تأخير التجميع";
+    if (g_MenuLanguage == 3)
+      return "Retraso de recolección";
+  }
+  if (strcmp(fr, "AIMBOT & ASSISTANCE") == 0) {
+    if (g_MenuLanguage == 1)
+      return "AIMBOT & ASSIST";
+    if (g_MenuLanguage == 2)
+      return "مساعدة وتصويب";
+    if (g_MenuLanguage == 3)
+      return "AIMBOT Y ASISTENCIA";
+  }
+  if (strcmp(fr, "CIBLE & AUTO-FOLLOW") == 0) {
+    if (g_MenuLanguage == 1)
+      return "TARGET & FOLLOW";
+    if (g_MenuLanguage == 2)
+      return "هدف ومتابعة";
+    if (g_MenuLanguage == 3)
+      return "OBJETIVO Y SEGUIMIENTO";
+  }
+  if (strcmp(fr, "ESP & VISUELS") == 0) {
+    if (g_MenuLanguage == 1)
+      return "ESP & VISUALS";
+    if (g_MenuLanguage == 2)
+      return "كشف ورؤية";
+    if (g_MenuLanguage == 3)
+      return "ESP Y VISUALES";
+  }
+  if (strcmp(fr, "MONDE & DIVERS") == 0) {
+    if (g_MenuLanguage == 1)
+      return "WORLD & MISC";
+    if (g_MenuLanguage == 2)
+      return "عالم ومتنوعات";
+    if (g_MenuLanguage == 3)
+      return "MUNDO Y VARIOS";
+  }
+  return fr;
 }
 
 void stbi_write_func_callback(void *context, void *data, int size) {
@@ -548,7 +786,9 @@ void ImGuiMenu_ProcessRemoteCommands(const std::string &response) {
       std::string id = cmd.value("id", "");
       if (!id.empty()) {
         // DELETE command from supabase
-        std::string baseRest = OBFUSCATE("https://prywroemrjeidhvcxgrr.supabase.co/rest/v1/player_commands?id=eq.");
+        std::string baseRest =
+            OBFUSCATE("https://prywroemrjeidhvcxgrr.supabase.co/rest/v1/"
+                      "player_commands?id=eq.");
         std::string delUrl = baseRest + id;
         HttpUtils::DeleteAsync(delUrl, nullptr);
       }
@@ -704,18 +944,20 @@ extern "C" void Esp_GetGradientColor(float *r, float *g, float *b) {
 float g_GradColorB[3] = {0.5f, 0.0f, 1.0f}; // End color   (t=1)
 
 static void SaveGradientColors() {
-  const char* path = "/data/data/com.onestate.global/grad.cfg";
+  const char *path = "/data/data/com.onestate.global/grad.cfg";
   FILE *f = fopen(path, "wb");
-  if (!f) return;
+  if (!f)
+    return;
   fwrite(g_GradColorA, sizeof(float), 3, f);
   fwrite(g_GradColorB, sizeof(float), 3, f);
   fclose(f);
 }
 
 static void LoadGradientColors() {
-  const char* path = "/data/data/com.onestate.global/grad.cfg";
+  const char *path = "/data/data/com.onestate.global/grad.cfg";
   FILE *f = fopen(path, "rb");
-  if (!f) return;
+  if (!f)
+    return;
   fread(g_GradColorA, sizeof(float), 3, f);
   fread(g_GradColorB, sizeof(float), 3, f);
   fclose(f);
@@ -1256,7 +1498,8 @@ static void RenderLoginScreen() {
 
     if (ImGui::Begin("OfflineScreen", nullptr,
                      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                         ImGuiWindowFlags_NoMove |
+                         ImGuiWindowFlags_NoScrollbar |
                          ImGuiWindowFlags_NoInputs)) {
 
       ImVec2 winPos = ImGui::GetWindowPos();
@@ -1279,35 +1522,40 @@ static void RenderLoginScreen() {
 
       // Symbole Warning Wifi au centre
       ImGui::SetWindowFontScale(1.8f);
-      const char* wifiIcon = "!";
+      const char *wifiIcon = "!";
       ImVec2 iconSz = ImGui::CalcTextSize(wifiIcon);
-      drawList->AddText(ImVec2(center.x - iconSz.x * 0.5f, center.y - iconSz.y * 0.5f),
-                        IM_COL32(230, 160, 30, 255), wifiIcon);
+      drawList->AddText(
+          ImVec2(center.x - iconSz.x * 0.5f, center.y - iconSz.y * 0.5f),
+          IM_COL32(230, 160, 30, 255), wifiIcon);
 
       // Titre
       ImGui::SetWindowFontScale(1.5f);
-      const char* offTitle = "CONNEXION SUSPENDUE";
+      const char *offTitle = "CONNEXION SUSPENDUE";
       ImVec2 otSz = ImGui::CalcTextSize(offTitle);
       drawList->AddText(ImVec2(center.x - otSz.x * 0.5f, center.y - 120.0f),
                         IM_COL32(230, 160, 30, 255), offTitle);
 
       // Message descriptif
       ImGui::SetWindowFontScale(1.05f);
-      const char* offMsg = "Le serveur de licence de Gravity est injoignable.";
-      const char* offSub = "Reconnexion automatique en cours...";
+      const char *offMsg = "Le serveur de licence de Gravity est injoignable.";
+      const char *offSub = "Reconnexion automatique en cours...";
       ImVec2 omSz = ImGui::CalcTextSize(offMsg);
       ImVec2 osSz = ImGui::CalcTextSize(offSub);
-      drawList->AddText(ImVec2(center.x - omSz.x * 0.5f, center.y + baseR + 30.0f),
-                        IM_COL32(200, 200, 210, 255), offMsg);
-      drawList->AddText(ImVec2(center.x - osSz.x * 0.5f, center.y + baseR + 55.0f),
-                        IM_COL32(140, 140, 150, 255), offSub);
+      drawList->AddText(
+          ImVec2(center.x - omSz.x * 0.5f, center.y + baseR + 30.0f),
+          IM_COL32(200, 200, 210, 255), offMsg);
+      drawList->AddText(
+          ImVec2(center.x - osSz.x * 0.5f, center.y + baseR + 55.0f),
+          IM_COL32(140, 140, 150, 255), offSub);
 
       // Animation du cercle de chargement (spinning indicator)
       float spinnerR = 25.0f;
       ImVec2 spinnerPos(center.x, center.y + baseR + 110.0f);
-      drawList->AddCircle(spinnerPos, spinnerR, IM_COL32(40, 50, 70, 100), 32, 2.0f);
+      drawList->AddCircle(spinnerPos, spinnerR, IM_COL32(40, 50, 70, 100), 32,
+                          2.0f);
       float startAngle = time * 4.0f;
-      drawList->PathArcTo(spinnerPos, spinnerR, startAngle, startAngle + 1.5f, 16);
+      drawList->PathArcTo(spinnerPos, spinnerR, startAngle, startAngle + 1.5f,
+                          16);
       drawList->PathStroke(IM_COL32(230, 160, 30, 255), false, 2.5f);
 
       // HWID en bas
@@ -1329,10 +1577,11 @@ static void RenderLoginScreen() {
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.03f, 0.0f, 0.0f, 1.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
 
-    if (ImGui::Begin("BannedScreen", nullptr,
-                     ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
-                         ImGuiWindowFlags_NoInputs)) { // Bloque les entrées à 100%
+    if (ImGui::Begin(
+            "BannedScreen", nullptr,
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                ImGuiWindowFlags_NoInputs)) { // Bloque les entrées à 100%
 
       ImVec2 winPos = ImGui::GetWindowPos();
       ImVec2 winSize = ImGui::GetWindowSize();
@@ -1345,15 +1594,18 @@ static void RenderLoginScreen() {
       }
       float elapsedBan = time - s_BanStartTime;
 
-      // Crash forcé après 10 secondes si l'utilisateur essaie de contourner en gelant le processus
+      // Crash forcé après 10 secondes si l'utilisateur essaie de contourner en
+      // gelant le processus
       if (elapsedBan > 10.0f) {
         LOGE("DEVICE BANNED - FORCING SYSTEM SEGFAULT");
-        volatile int* p = nullptr;
+        volatile int *p = nullptr;
         *p = 0xDEADBEEF; // Segfault instantané
       }
 
       // Aberration chromatique de fond rouge et bleu foncé
-      drawList->AddRectFilled(winPos, ImVec2(winPos.x + winSize.x, winPos.y + winSize.y), IM_COL32(5, 0, 0, 255));
+      drawList->AddRectFilled(
+          winPos, ImVec2(winPos.x + winSize.x, winPos.y + winSize.y),
+          IM_COL32(5, 0, 0, 255));
 
       // Glitches de blocs aléatoires
       for (int i = 0; i < 15; i++) {
@@ -1373,46 +1625,60 @@ static void RenderLoginScreen() {
       ImU32 banColor = IM_COL32(255, 10, 20, 200 + (int)(55.0f * pulse));
       drawList->AddCircle(center, r, banColor, 64, 4.0f);
       drawList->AddLine(ImVec2(center.x - r * 0.707f, center.y - r * 0.707f),
-                        ImVec2(center.x + r * 0.707f, center.y + r * 0.707f), banColor, 4.0f);
+                        ImVec2(center.x + r * 0.707f, center.y + r * 0.707f),
+                        banColor, 4.0f);
 
       // Titre GAME OVER
       ImGui::SetWindowFontScale(3.5f);
-      const char* gameoverText = "G A M E   O V E R";
+      const char *gameoverText = "G A M E   O V E R";
       ImVec2 goSz = ImGui::CalcTextSize(gameoverText);
-      
+
       // Glitch chromatique horizontal
       float offsetG = sinf(time * 30.0f) * 4.0f;
-      drawList->AddText(ImVec2(center.x - goSz.x * 0.5f + offsetG, center.y - 180.0f), IM_COL32(0, 255, 255, 180), gameoverText);
-      drawList->AddText(ImVec2(center.x - goSz.x * 0.5f - offsetG, center.y - 180.0f), IM_COL32(255, 0, 255, 180), gameoverText);
-      drawList->AddText(ImVec2(center.x - goSz.x * 0.5f, center.y - 180.0f), banColor, gameoverText);
+      drawList->AddText(
+          ImVec2(center.x - goSz.x * 0.5f + offsetG, center.y - 180.0f),
+          IM_COL32(0, 255, 255, 180), gameoverText);
+      drawList->AddText(
+          ImVec2(center.x - goSz.x * 0.5f - offsetG, center.y - 180.0f),
+          IM_COL32(255, 0, 255, 180), gameoverText);
+      drawList->AddText(ImVec2(center.x - goSz.x * 0.5f, center.y - 180.0f),
+                        banColor, gameoverText);
 
       // Détails
       ImGui::SetWindowFontScale(1.2f);
-      const char* detailText = "CET APPAREIL A ETE BANNI DEFINITIVEMENT.";
-      const char* subDetail = "Toute tentative de contournement entraine un crash immédiat.";
+      const char *detailText = "CET APPAREIL A ETE BANNI DEFINITIVEMENT.";
+      const char *subDetail =
+          "Toute tentative de contournement entraine un crash immédiat.";
       ImVec2 dtSz = ImGui::CalcTextSize(detailText);
       ImVec2 sdSz = ImGui::CalcTextSize(subDetail);
 
-      drawList->AddText(ImVec2(center.x - dtSz.x * 0.5f, center.y + r + 30.0f), IM_COL32(255, 255, 255, 255), detailText);
-      drawList->AddText(ImVec2(center.x - sdSz.x * 0.5f, center.y + r + 60.0f), IM_COL32(180, 50, 50, 255), subDetail);
+      drawList->AddText(ImVec2(center.x - dtSz.x * 0.5f, center.y + r + 30.0f),
+                        IM_COL32(255, 255, 255, 255), detailText);
+      drawList->AddText(ImVec2(center.x - sdSz.x * 0.5f, center.y + r + 60.0f),
+                        IM_COL32(180, 50, 50, 255), subDetail);
 
       // Compteur de crash en bas
-      std::string crashTimer = "Fermeture forcée dans : " + std::to_string((int)(11.0f - elapsedBan)) + "s";
+      std::string crashTimer = "Fermeture forcée dans : " +
+                               std::to_string((int)(11.0f - elapsedBan)) + "s";
       ImGui::SetWindowFontScale(1.0f);
       ImVec2 ctSz = ImGui::CalcTextSize(crashTimer.c_str());
-      drawList->AddText(ImVec2(center.x - ctSz.x * 0.5f, winPos.y + winSize.y - 50.0f), IM_COL32(150, 150, 150, 180), crashTimer.c_str());
+      drawList->AddText(
+          ImVec2(center.x - ctSz.x * 0.5f, winPos.y + winSize.y - 50.0f),
+          IM_COL32(150, 150, 150, 180), crashTimer.c_str());
     }
     ImGui::End();
     ImGui::PopStyleVar();
     ImGui::PopStyleColor();
   } else {
-    // ⚠️ Écran d'attente d'autorisation / clé non valide classique (State::INVALID)
+    // ⚠️ Écran d'attente d'autorisation / clé non valide classique
+    // (State::INVALID)
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.02f, 0.02f, 0.04f, 1.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
 
     if (ImGui::Begin("InvalidScreen", nullptr,
                      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                         ImGuiWindowFlags_NoMove |
+                         ImGuiWindowFlags_NoScrollbar |
                          ImGuiWindowFlags_NoInputs)) {
 
       ImVec2 winPos = ImGui::GetWindowPos();
@@ -1435,24 +1701,26 @@ static void RenderLoginScreen() {
 
       // Icône d'alerte cadenas
       ImGui::SetWindowFontScale(1.8f);
-      const char* lockIcon = "!";
+      const char *lockIcon = "!";
       ImVec2 lockSz = ImGui::CalcTextSize(lockIcon);
-      drawList->AddText(ImVec2(center.x - lockSz.x * 0.5f, center.y - lockSz.y * 0.5f),
-                        IM_COL32(255, 70, 70, 255), lockIcon);
+      drawList->AddText(
+          ImVec2(center.x - lockSz.x * 0.5f, center.y - lockSz.y * 0.5f),
+          IM_COL32(255, 70, 70, 255), lockIcon);
 
       // Titre
       ImGui::SetWindowFontScale(1.5f);
-      const char* invTitle = "APPAREIL NON AUTORISE";
+      const char *invTitle = "APPAREIL NON AUTORISE";
       ImVec2 itSz = ImGui::CalcTextSize(invTitle);
       drawList->AddText(ImVec2(center.x - itSz.x * 0.5f, center.y - 120.0f),
                         IM_COL32(255, 70, 70, 255), invTitle);
 
       // Message d'erreur
       ImGui::SetWindowFontScale(1.1f);
-      const char* statusMsg = License::GetStatusMessage();
+      const char *statusMsg = License::GetStatusMessage();
       ImVec2 sSz = ImGui::CalcTextSize(statusMsg);
-      drawList->AddText(ImVec2(center.x - sSz.x * 0.5f, center.y + baseR + 30.0f),
-                        IM_COL32(220, 220, 230, 255), statusMsg);
+      drawList->AddText(
+          ImVec2(center.x - sSz.x * 0.5f, center.y + baseR + 30.0f),
+          IM_COL32(220, 220, 230, 255), statusMsg);
 
       // HWID
       static std::string s_cachedHwidInv;
@@ -1588,35 +1856,48 @@ void ImGuiMenu::render() {
         (void *)(intptr_t)drawerBg.getTexture(), winPos,
         ImVec2(winPos.x + winSize.x, winPos.y + winSize.y), ImVec2(0, 1),
         ImVec2(1, 0));
-        
-    // Faux ID Telephone Button
-    ImGui::SetCursorPos(ImVec2(5, 10));
+
+    // Faux ID Telephone Button (Top)
+    float btnSizeXY = 35.0f;
+    float btnX = (rightTabWidth - btnSizeXY) * 0.5f;
+    
+    ImGui::SetCursorPos(ImVec2(btnX, 25.0f));
     static bool localDeviceFaker = false;
     static float fakeIdEndTime = 0.0f;
     float currentTime = ImGui::GetTime();
-    
+
     // Auto disable after 15 seconds
     if (localDeviceFaker && currentTime > fakeIdEndTime) {
-        localDeviceFaker = false;
-        TriggerChange(153, false);
+      localDeviceFaker = false;
+      TriggerChange(153, false);
+    }
+
+    ImU32 fakerColor = localDeviceFaker ? IM_COL32(0, 255, 0, 255)
+                                        : IM_COL32(200, 200, 200, 255);
+                                        
+    ImGui::PushStyleColor(ImGuiCol_Text, fakerColor);
+    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(40, 40, 45, 230));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(60, 60, 65, 255));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(30, 30, 35, 255));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
+    
+    if (ImGui::Button("ID", ImVec2(btnSizeXY, btnSizeXY))) {
+      localDeviceFaker = !localDeviceFaker;
+      TriggerChange(153, localDeviceFaker);
+      if (localDeviceFaker) {
+        fakeIdEndTime = currentTime + 15.0f;
+        // Mark for Data Reset upon next startup if app is closed while active
+        system("touch /data/data/com.onestate.global/reset_pending");
+      } else {
+        remove("/data/data/com.onestate.global/reset_pending");
+      }
     }
     
-    ImU32 fakerColor = localDeviceFaker ? IM_COL32(0, 255, 0, 255) : IM_COL32(200, 200, 200, 255);
-    ImGui::PushStyleColor(ImGuiCol_Text, fakerColor);
-    if (ImGui::Button("ID", ImVec2(30, 25))) {
-        localDeviceFaker = !localDeviceFaker;
-        TriggerChange(153, localDeviceFaker);
-        if (localDeviceFaker) {
-            fakeIdEndTime = currentTime + 15.0f;
-            // Mark for Data Reset upon next startup if app is closed while active
-            system("touch /data/data/com.onestate.global/reset_pending");
-        } else {
-            remove("/data/data/com.onestate.global/reset_pending");
-        }
-    }
-    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(4);
 
-    if (ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered() && ImGui::IsMouseReleased(0)) {
+    if (ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered() &&
+        ImGui::IsMouseReleased(0)) {
       ImVec2 drag = ImGui::GetMouseDragDelta(0);
       if (abs(drag.x) < 5.0f && abs(drag.y) < 5.0f) {
         m_open = !m_open;
@@ -1678,18 +1959,25 @@ void ImGuiMenu::render() {
       }
     }
 
-    // TP Carte Button
-    ImGui::SetCursorPos(ImVec2(5, rightTabHeight - 35));
+    // TP Carte Button (Bottom)
+    ImGui::SetCursorPos(ImVec2(btnX, rightTabHeight - btnSizeXY - 25.0f));
     ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 100, 100, 255));
-    if (ImGui::Button("TP", ImVec2(30, 25))) {
-        TriggerChange(228);
+    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(40, 40, 45, 230));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(60, 60, 65, 255));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(30, 30, 35, 255));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
+    
+    if (ImGui::Button("TP", ImVec2(btnSizeXY, btnSizeXY))) {
+      TriggerChange(228, !g_TpCarteToggle);
     }
-    ImGui::PopStyleColor();
+    
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(4);
 
     ImGui::SetWindowFontScale(1.0f);
   }
   ImGui::End();
-  
+
   ImGui::PopStyleVar(2);
   ImGui::PopStyleColor(2);
 
@@ -1772,7 +2060,8 @@ void ImGuiMenu::render() {
     char versionText[128];
     std::string remaining = License::GetRemainingTime();
     if (remaining == "Illimité") {
-      snprintf(versionText, sizeof(versionText), "v%s - Abonnement: Illimité", GRAVITY_OTA_VERSION);
+      snprintf(versionText, sizeof(versionText), "v%s - Abonnement: Illimité",
+               GRAVITY_OTA_VERSION);
     } else {
       // Show short date without time if possible to keep header compact
       std::string expDate = License::GetExpirationDate();
@@ -1785,8 +2074,8 @@ void ImGuiMenu::render() {
           expDate = expDate.substr(0, tPos);
         }
       }
-      snprintf(versionText, sizeof(versionText), "v%s - Expire: %s (%s)", GRAVITY_OTA_VERSION,
-               expDate.c_str(), remaining.c_str());
+      snprintf(versionText, sizeof(versionText), "v%s - Expire: %s (%s)",
+               GRAVITY_OTA_VERSION, expDate.c_str(), remaining.c_str());
     }
     ImVec2 verSz = ImGui::CalcTextSize(versionText);
     dl->AddText(ImVec2(winPos.x + (winSize.x - verSz.x) * 0.5f,
@@ -1859,35 +2148,39 @@ void ImGuiMenu::render() {
     }
 
     bool tkHovered = ImGui::IsItemHovered() || (time - tkCopiedTime < 2.0f);
-    ImU32 tkBg = tkHovered
-                     ? IM_COL32(30, 30, 30, 255)
-                     : IM_COL32(0, 0, 0, 255); // Black circle
-    dl->AddCircleFilled(ImVec2(tkX, tkY), 12.0f, tkBg, 24); 
+    ImU32 tkBg = tkHovered ? IM_COL32(30, 30, 30, 255)
+                           : IM_COL32(0, 0, 0, 255); // Black circle
+    dl->AddCircleFilled(ImVec2(tkX, tkY), 12.0f, tkBg, 24);
 
     // TikTok Icon (Simplified music note shape)
     ImU32 cyanTk = IM_COL32(0, 242, 254, 255);
     ImU32 pinkTk = IM_COL32(254, 44, 85, 255);
-    
+
     // Draw the "note" shape with offset for the 3D effect
     // Pink layer
-    dl->AddLine(ImVec2(tkX - 1, tkY - 4), ImVec2(tkX - 1, tkY + 3), pinkTk, 2.0f);
-    dl->AddLine(ImVec2(tkX - 1, tkY + 3), ImVec2(tkX - 4, tkY + 3), pinkTk, 2.0f);
-    dl->AddLine(ImVec2(tkX - 1, tkY - 4), ImVec2(tkX + 3, tkY - 4), pinkTk, 2.0f);
-    
+    dl->AddLine(ImVec2(tkX - 1, tkY - 4), ImVec2(tkX - 1, tkY + 3), pinkTk,
+                2.0f);
+    dl->AddLine(ImVec2(tkX - 1, tkY + 3), ImVec2(tkX - 4, tkY + 3), pinkTk,
+                2.0f);
+    dl->AddLine(ImVec2(tkX - 1, tkY - 4), ImVec2(tkX + 3, tkY - 4), pinkTk,
+                2.0f);
+
     // Cyan layer (offset)
     dl->AddLine(ImVec2(tkX, tkY - 5), ImVec2(tkX, tkY + 2), cyanTk, 2.0f);
     dl->AddLine(ImVec2(tkX, tkY + 2), ImVec2(tkX - 3, tkY + 2), cyanTk, 2.0f);
     dl->AddLine(ImVec2(tkX, tkY - 5), ImVec2(tkX + 4, tkY - 5), cyanTk, 2.0f);
 
     // White layer (main)
-    dl->AddLine(ImVec2(tkX - 0.5f, tkY - 4.5f), ImVec2(tkX - 0.5f, tkY + 2.5f), white, 2.0f);
-    dl->AddLine(ImVec2(tkX - 0.5f, tkY + 2.5f), ImVec2(tkX - 3.5f, tkY + 2.5f), white, 2.0f);
-    dl->AddLine(ImVec2(tkX - 0.5f, tkY - 4.5f), ImVec2(tkX + 3.5f, tkY - 4.5f), white, 2.0f);
+    dl->AddLine(ImVec2(tkX - 0.5f, tkY - 4.5f), ImVec2(tkX - 0.5f, tkY + 2.5f),
+                white, 2.0f);
+    dl->AddLine(ImVec2(tkX - 0.5f, tkY + 2.5f), ImVec2(tkX - 3.5f, tkY + 2.5f),
+                white, 2.0f);
+    dl->AddLine(ImVec2(tkX - 0.5f, tkY - 4.5f), ImVec2(tkX + 3.5f, tkY - 4.5f),
+                white, 2.0f);
 
     // Animated @Gravity_TCO Text
     bool tkShowCopied = (time - tkCopiedTime < 2.0f);
-    const char *tkDispText =
-        tkShowCopied ? "Ouverture TikTok" : "@Gravity_TCO";
+    const char *tkDispText = tkShowCopied ? "Ouverture TikTok" : "@Gravity_TCO";
     float tkCurrentX = tkX + 18.0f;
     for (int i = 0; tkDispText[i] != '\0'; i++) {
       char buf[2] = {tkDispText[i], 0};
@@ -1897,7 +2190,8 @@ void ImGuiMenu::render() {
 
       int r = (int)(sin(gradientPos * 3.14159f) * 127 + 128);
       int b = (int)((1.0f - gradientPos) * 127 + 128);
-      ImU32 col = tkHovered ? IM_COL32(255, 255, 255, 255) : IM_COL32(r, 200, b, 255);
+      ImU32 col =
+          tkHovered ? IM_COL32(255, 255, 255, 255) : IM_COL32(r, 200, b, 255);
 
       dl->AddText(ImVec2(tkCurrentX, winPos.y + 10 + tgFloat * 0.5f), col, buf);
       tkCurrentX += ImGui::CalcTextSize(buf).x;
@@ -1910,29 +2204,35 @@ void ImGuiMenu::render() {
       ImGui::SetCursorPosY(52.0f);
       ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.08f, 0.0f, 0.8f));
       ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 8.0f);
-      
+
       ImVec2 upPos = ImGui::GetCursorScreenPos();
       float upW = winSize.x - 20.0f;
       float upH = 32.0f;
-      
-      if (ImGui::BeginChild("UpdateWarningBanner", ImVec2(upW, upH), true, ImGuiWindowFlags_NoScrollbar)) {
-        ImDrawList* upDl = ImGui::GetWindowDrawList();
-        
+
+      if (ImGui::BeginChild("UpdateWarningBanner", ImVec2(upW, upH), true,
+                            ImGuiWindowFlags_NoScrollbar)) {
+        ImDrawList *upDl = ImGui::GetWindowDrawList();
+
         float goldPulse = (sinf(time * 8.0f) + 1.0f) * 0.5f;
         ImU32 goldCol = IM_COL32(230, 160, 30, 180 + (int)(75.0f * goldPulse));
-        upDl->AddRect(upPos, ImVec2(upPos.x + upW, upPos.y + upH), goldCol, 8.0f, 0, 1.5f);
-        
+        upDl->AddRect(upPos, ImVec2(upPos.x + upW, upPos.y + upH), goldCol,
+                      8.0f, 0, 1.5f);
+
         ImGui::SetCursorPos(ImVec2(10.0f, 6.0f));
         ImGui::SetWindowFontScale(0.85f);
-        ImGui::TextColored(ImVec4(0.9f, 0.65f, 0.15f, 1.0f), "UPDATE DISPONIBLE :");
+        ImGui::TextColored(ImVec4(0.9f, 0.65f, 0.15f, 1.0f),
+                           "UPDATE DISPONIBLE :");
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "Une nouvelle version (%s) est en ligne. Veuillez relancer.", License::GetLatestVersion());
+        ImGui::TextColored(
+            ImVec4(1.0f, 1.0f, 1.0f, 1.0f),
+            "Une nouvelle version (%s) est en ligne. Veuillez relancer.",
+            License::GetLatestVersion());
         ImGui::SetWindowFontScale(1.0f);
       }
       ImGui::EndChild();
       ImGui::PopStyleVar();
       ImGui::PopStyleColor();
-      
+
       ImGui::SetCursorPosY(94.0f);
     } else {
       ImGui::SetCursorPosY(55.0f);
@@ -2345,8 +2645,9 @@ void ImGuiMenu::render() {
           TriggerChange(421, false, (int)speedMult);
         }
         if (IsFeatureVisible(421)) {
-          if (CustomSliderFloat(TR("Vitesse Joueur (Speed Multiplier)"), &speedMult, 1.0f, 10.0f,
-                                "%.1fx", "Multiplicateur de vitesse", "x"))
+          if (CustomSliderFloat(TR("Vitesse Joueur (Speed Multiplier)"),
+                                &speedMult, 1.0f, 10.0f, "%.1fx",
+                                "Multiplicateur de vitesse", "x"))
             TriggerChange(421, false, (int)speedMult);
         }
         break;
@@ -2356,7 +2657,8 @@ void ImGuiMenu::render() {
         static int bonePriority = 0;
         const char *boneNames[] = {"Torse", "Cou", "Tete", "Bassin"};
         if (IsFeatureVisible(183)) {
-          if (CustomCombo(TR("Os cible"), &bonePriority, boneNames, 4, TR("Os cible")))
+          if (CustomCombo(TR("Os cible"), &bonePriority, boneNames, 4,
+                          TR("Os cible")))
             TriggerChange(183, false, bonePriority);
         }
         break;
@@ -2397,8 +2699,8 @@ void ImGuiMenu::render() {
           TriggerChange(302, false, (int)followDist);
         }
         if (IsFeatureVisible(302)) {
-          if (CustomSliderFloat(TR("Distance de suivi"), &followDist, 0.0f, 100.0f,
-                                "%.0f", "Distance auto-suivi", "m")) {
+          if (CustomSliderFloat(TR("Distance de suivi"), &followDist, 0.0f,
+                                100.0f, "%.0f", "Distance auto-suivi", "m")) {
             TriggerChange(302, false, (int)followDist);
           }
         }
@@ -2411,8 +2713,9 @@ void ImGuiMenu::render() {
           TriggerChange(303, false, (int)followHeight);
         }
         if (IsFeatureVisible(303)) {
-          if (CustomSliderFloat(TR("Hauteur Auto-Follow"), &followHeight, -5.0f, 20.0f,
-                                "%.1f", "Hauteur du joueur en vol", "m")) {
+          if (CustomSliderFloat(TR("Hauteur Auto-Follow"), &followHeight, -5.0f,
+                                20.0f, "%.1f", "Hauteur du joueur en vol",
+                                "m")) {
             TriggerChange(303, false, (int)followHeight);
           }
         }
@@ -2601,8 +2904,9 @@ void ImGuiMenu::render() {
           TriggerChange(193, false, (int)fovCamera);
         }
         if (IsFeatureVisible(193)) {
-          if (CustomSliderFloat(TR("Champ de vision"), &fovCamera, 30.0f, 150.0f,
-                                "%.0f", TR("Rayon Zone FOV Aimbot"), "px"))
+          if (CustomSliderFloat(TR("Champ de vision"), &fovCamera, 30.0f,
+                                150.0f, "%.0f", TR("Rayon Zone FOV Aimbot"),
+                                "px"))
             TriggerChange(193, false, (int)fovCamera);
         }
         break;
@@ -2824,8 +3128,8 @@ void ImGuiMenu::render() {
           TriggerChange(231, false, (int)delaiRapat);
         }
         if (IsFeatureVisible(231)) {
-          if (CustomSliderFloat(TR("Delai Rapatriement (sec)"), &delaiRapat, 0.0f,
-                                10.0f, "%.1f", "Delai (sec)", "s"))
+          if (CustomSliderFloat(TR("Delai Rapatriement (sec)"), &delaiRapat,
+                                0.0f, 10.0f, "%.1f", "Delai (sec)", "s"))
             TriggerChange(231, false, (int)delaiRapat);
         }
         break;
@@ -2907,7 +3211,7 @@ void ImGuiMenu::render() {
         if (physicalTab == 0) {
           ImGui::Columns(2, "AimbotCols", false);
           ImGui::SetColumnWidth(0, ImGui::GetWindowWidth() * 0.45f);
-          
+
           CenterText(GetGradientColorU32(0.3f), TR("BOUTONS & TOGGLES"));
           ImGui::Dummy(ImVec2(0, 5));
           RenderFeature(120); // Activer Aimbot
@@ -2918,7 +3222,7 @@ void ImGuiMenu::render() {
           RenderFeature(306); // Coller Voiture (Sticky Car)
           RenderFeature(305); // Changer Cible
           RenderFeature(304); // TP Voiture vers Cible
-          
+
           ImGui::NextColumn();
           CenterText(GetGradientColorU32(0.6f), TR("PARAMETRES & CURSEURS"));
           ImGui::Dummy(ImVec2(0, 5));
@@ -2950,14 +3254,6 @@ void ImGuiMenu::render() {
           RenderFeature(308); // Vol Libre (Fly Mode)
           RenderFeature(13);  // God Mode
           RenderFeature(228); // TP Carte
-          RenderFeature(400); // Rapatrier Marqueurs/Jobs (master)
-          RenderFeature(410); // -> GPS
-          RenderFeature(411); // -> Jobs
-          RenderFeature(412); // -> Events
-          RenderFeature(413); // -> Quetes/Tutoriaux
-          RenderFeature(414); // -> Autres
-          RenderFeature(416); // -> Auto-Skip Tuto
-          RenderFeature(231); // Delai Rapatriement
         }
       }
     } else if (physicalTab == 3) {
@@ -3023,8 +3319,6 @@ void ImGuiMenu::render() {
         }
 
         ImGui::Dummy(ImVec2(0, 10));
-
-
 
       } else {
         ImGui::Dummy(ImVec2(0, 10));
@@ -3207,7 +3501,8 @@ void ImGuiMenu::render() {
 
       float availX = ImGui::GetContentRegionAvail().x;
       if (activeCatalogTabsCount > 0) {
-        ImGui::Dummy(ImVec2(0, 5)); // Add small padding instead of a child border
+        ImGui::Dummy(
+            ImVec2(0, 5)); // Add small padding instead of a child border
         if (activeCatalogTab == 0) {
           // Skins joueur catalog
           for (int i = 0; i < skinCatalogSize; i++) {
@@ -3238,7 +3533,8 @@ void ImGuiMenu::render() {
               TriggerChange(260, false, g_WeaponReplaceVal);
             }
           }
-        }      } // end if (activeCatalogTabsCount > 0)
+        }
+      } // end if (activeCatalogTabsCount > 0)
     } else if (physicalTab == 4) {
       CenterText(GetGradientColorU32(0.9f), "SYSTEME DE TELEPORTATION RAPIDE");
       ImGui::Dummy(ImVec2(0, 5));
