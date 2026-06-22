@@ -1624,7 +1624,6 @@ void ImGuiMenu::render() {
     if (localDeviceFaker && currentTime > fakeIdEndTime) {
         localDeviceFaker = false;
         TriggerChange(153, false);
-        remove("/data/data/com.onestate.global/reset_pending");
     }
     
     ImU32 fakerColor = localDeviceFaker ? IM_COL32(0, 255, 0, 255) : IM_COL32(200, 200, 200, 255);
