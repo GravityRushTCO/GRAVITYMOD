@@ -57,7 +57,7 @@ static const char* bgFragmentShaderSource =
     "    \n"
     "    vec3 fwCol = vec3(0.0);\n"
     "    if (d < 0.0) {\n"
-    "        vec2 cp = (p / u_resolution.y) * 8.0;\n"
+    "        vec2 cp = (p / u_resolution.y) * 4.0;\n"
     "        \n"
     "        float dWord = 1000.0;\n"
     "        float tOff = 0.0;\n"

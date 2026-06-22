@@ -6,7 +6,7 @@ android {
         applicationId "com.android.support"
         minSdkVersion 21
         targetSdkVersion 36
-        versionCode 13
+        versionCode 14
         versionName "5.1"
         ndk {
             //noinspection ChromeOsAbiSupport

@@ -988,12 +988,16 @@ static float GetItemGradientT() {
 }
 
 static bool CustomCheckbox(const char *label, bool *v) {
-  ImVec2 pos = ImGui::GetCursorScreenPos();
   float square_sz = ImGui::GetFrameHeight();
   ImVec2 label_size = ImGui::CalcTextSize(label);
+  float totalWidth = square_sz + 8.0f + label_size.x;
+  float availX = ImGui::GetWindowWidth();
+  ImGui::SetCursorPosX((availX - totalWidth) * 0.5f);
+
+  ImVec2 pos = ImGui::GetCursorScreenPos();
 
   bool pressed = ImGui::InvisibleButton(
-      label, ImVec2(square_sz + 8.0f + label_size.x, square_sz));
+      label, ImVec2(totalWidth, square_sz));
   if (pressed)
     *v = !*v;
 
@@ -1040,7 +1044,11 @@ static bool CustomSliderFloat(const char *label, float *v, float min_val,
   ImGui::Text("%s", titleText);
   ImGui::Dummy(ImVec2(0, 1)); // Small gap
 
-  ImGui::PushItemWidth(250.0f);
+  float width = 250.0f;
+  float availX = ImGui::GetWindowWidth();
+  ImGui::SetCursorPosX((availX - width) * 0.5f);
+
+  ImGui::PushItemWidth(width);
 
   ImVec2 cpos = ImGui::GetCursorScreenPos();
   float height = ImGui::GetFrameHeight();
