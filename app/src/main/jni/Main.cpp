@@ -1772,6 +1772,36 @@ static bool hook_TryGetNearVehicleSeat(void *_this, V3 position, void *vehiclesK
                                              }
                                            }
                                          }
+
+                                         // ── Player Skin: enforce every 500ms ──
+                                         if (g_SkinReplaceVal > 0 &&
+                                             g_SkinReplaceVal < skinCatalogSize &&
+                                             g_PedStreamingProviderInstance &&
+                                             g_LocalPlayerEntityId != -1 &&
+                                             fn_TryGetIndex) {
+                                           static double lastPedSkinTick = 0.0;
+                                           extern double Esp_GetTimeMs();
+                                           double now = Esp_GetTimeMs();
+                                           if (now - lastPedSkinTick > 500.0) {
+                                             lastPedSkinTick = now;
+                                             void *provider = g_PedStreamingProviderInstance;
+                                             void *pedUtility = isValidPointer(provider) ? *(void **)((char *)provider + 0x50) : nullptr;
+                                             if (isValidPointer(pedUtility)) {
+                                               void *stashClothes = *(void **)((char *)pedUtility + 0x58);
+                                               if (isValidPointer(stashClothes)) {
+                                                 void *clothesMap = *(void **)((char *)stashClothes + 0x20);
+                                                 void *clothesData = *(void **)((char *)stashClothes + 0x28);
+                                                 if (isValidPointer(clothesMap) && isValidPointer(clothesData)) {
+                                                   int clothesSlot = -1;
+                                                   if (fn_TryGetIndex(clothesMap, g_LocalPlayerEntityId, &clothesSlot)) {
+                                                     uint16_t *clothesValPtr = (uint16_t *)((char *)clothesData + 0x20) + clothesSlot;
+                                                     *clothesValPtr = (uint16_t)skinCatalog[g_SkinReplaceVal].idVal;
+                                                   }
+                                                 }
+                                               }
+                                             }
+                                           }
+                                         }
                                        }
 
                                        void *g_MainCameraStorage = nullptr;
@@ -2648,12 +2678,12 @@ static bool hook_TryGetNearVehicleSeat(void *_this, V3 position, void *vehiclesK
                                                        void *
                                                            *)((char *)
                                                                   stashClothes +
-                                                              0x28);
+                                                              0x20);
                                                    void *clothesData = *(
                                                        void *
                                                            *)((char *)
                                                                   stashClothes +
-                                                              0x30);
+                                                              0x28);
                                                    if (isValidPointer(
                                                            clothesMap) &&
                                                        isValidPointer(
