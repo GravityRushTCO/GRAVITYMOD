@@ -1871,78 +1871,7 @@ style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
         m_open = !m_open;
     }
 
-    // ─────────────────────────────────────────────────────
-    // HORIZONTAL ROW: ID button (left) + TP button (right)
-    // ─────────────────────────────────────────────────────
-    float btnSz  = 38.0f;
-    float centerY = (bottomTabHeight - btnSz) * 0.5f;
-    float pulse  = sinf(t * 3.5f) * 0.5f + 0.5f;
-    ImU32 gradC  = GetGradientColorU32(0.5f);
-    uint8_t gr   = (gradC >> 0) & 0xFF;
-    uint8_t gg   = (gradC >> 8) & 0xFF;
-    uint8_t gb   = (gradC >> 16) & 0xFF;
-
-    // — ID BUTTON (left side) —
-    static bool localDeviceFaker = false;
-    static float fakeIdEndTime   = 0.0f;
-    float currentTime = t;
-    if (localDeviceFaker && currentTime > fakeIdEndTime) {
-      localDeviceFaker = false;
-      TriggerChange(153, false);
-    }
-    // Halo glow ring
-    {
-      float haloR = btnSz * 0.5f + 4.0f + pulse * 6.0f;
-      ImVec2 haloC = ImVec2(winPos.x + 18.0f + btnSz * 0.5f,
-                            winPos.y + bottomTabHeight * 0.5f);
-      uint8_t ha = localDeviceFaker ? 180 : (uint8_t)(60 + 80 * pulse);
-      drawList->AddCircle(haloC, haloR,
-          localDeviceFaker ? IM_COL32(0,255,80, ha)
-                           : IM_COL32(gr, gg, gb, ha), 32, 2.0f);
-    }
-    ImGui::SetCursorPos(ImVec2(18.0f, centerY));
-    ImGui::PushStyleColor(ImGuiCol_Text,
-        localDeviceFaker ? IM_COL32(0,255,80,255) : IM_COL32(220,220,220,255));
-    ImGui::PushStyleColor(ImGuiCol_Button,        IM_COL32(25,25,30,220));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(50,50,60,255));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  IM_COL32(15,15,20,255));
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, btnSz * 0.5f);
-    if (ImGui::Button("ID", ImVec2(btnSz, btnSz))) {
-      localDeviceFaker = !localDeviceFaker;
-      TriggerChange(153, localDeviceFaker);
-      if (localDeviceFaker) {
-        fakeIdEndTime = currentTime + 15.0f;
-        system("touch /data/data/com.onestate.global/reset_pending");
-      } else {
-        remove("/data/data/com.onestate.global/reset_pending");
-      }
-    }
-    ImGui::PopStyleVar();
-    ImGui::PopStyleColor(4);
-
-    // — TP BUTTON (right side) —
-    extern bool g_TpCarteToggle;
-    {
-      float haloR = btnSz * 0.5f + 4.0f + pulse * 6.0f;
-      ImVec2 haloC = ImVec2(winPos.x + bottomTabWidth - 18.0f - btnSz * 0.5f,
-                            winPos.y + bottomTabHeight * 0.5f);
-      uint8_t ha = g_TpCarteToggle ? 200 : (uint8_t)(50 + 70 * pulse);
-      drawList->AddCircle(haloC, haloR,
-          g_TpCarteToggle ? IM_COL32(255,80,80,ha) : IM_COL32(gr,gg,gb,ha),
-          32, 2.0f);
-    }
-    ImGui::SetCursorPos(ImVec2(bottomTabWidth - 18.0f - btnSz, centerY));
-    ImGui::PushStyleColor(ImGuiCol_Text,
-        g_TpCarteToggle ? IM_COL32(255,80,80,255) : IM_COL32(220,220,220,255));
-    ImGui::PushStyleColor(ImGuiCol_Button,        IM_COL32(25,25,30,220));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(50,50,60,255));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  IM_COL32(15,15,20,255));
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, btnSz * 0.5f);
-    if (ImGui::Button("TP", ImVec2(btnSz, btnSz))) {
-      TriggerChange(228, !g_TpCarteToggle);
-    }
-    ImGui::PopStyleVar();
-    ImGui::PopStyleColor(4);
+    // Removed ID and TP buttons as requested
 
     ImGui::SetWindowFontScale(1.0f);
   }
@@ -2389,7 +2318,7 @@ style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
     }
 
     float navRailWidth = 140.0f;
-    float contentWidth = std::max(100.0f, avail.x - navRailWidth - 16.0f);
+    float contentWidth = std::max(100.0f, avail.x - navRailWidth - 2.0f);
     float safeContentHeight = std::max(100.0f, avail.y - 20.0f);
     float centerGapWidth = 0.0f;
 
@@ -2455,7 +2384,7 @@ style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
     ImGui::PopStyleColor(2);
     ImGui::PopStyleVar(2);
 
-    ImGui::SameLine();
+    ImGui::SameLine(0, 0);
 
     // Center gap — transparent so HexBg shows through
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
@@ -2465,7 +2394,7 @@ style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
     ImGui::EndChild();
     ImGui::PopStyleColor();
 
-    ImGui::SameLine();
+    ImGui::SameLine(0, 0);
 
     // Helper to center text
     auto CenterText = [](ImU32 col, const char *text) {
@@ -3177,9 +3106,6 @@ style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
       } else {
         // Fallback rendering
         if (physicalTab == 0) {
-          ImGui::Columns(2, "AimbotCols", false);
-          ImGui::SetColumnWidth(0, ImGui::GetWindowWidth() * 0.45f);
-
           CenterText(GetGradientColorU32(0.3f), TR("BOUTONS & TOGGLES"));
           ImGui::Dummy(ImVec2(0, 5));
           RenderFeature(120); // Activer Aimbot
@@ -3191,7 +3117,7 @@ style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
           RenderFeature(305); // Changer Cible
           RenderFeature(304); // TP Voiture vers Cible
 
-          ImGui::NextColumn();
+          ImGui::Dummy(ImVec2(0, 10));
           CenterText(GetGradientColorU32(0.6f), TR("PARAMETRES & CURSEURS"));
           ImGui::Dummy(ImVec2(0, 5));
           RenderFeature(183); // Os cible
@@ -3200,7 +3126,6 @@ style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
           RenderFeature(302); // Distance de suivi
           RenderFeature(303); // Hauteur Auto-Follow
           RenderFeature(307); // Hauteur TP Cible
-          ImGui::Columns(1);
         } else if (physicalTab == 1) {
           CenterText(GetGradientColorU32(0.5f), TR("ESP & VISUELS"));
           ImGui::Dummy(ImVec2(0, 5));
