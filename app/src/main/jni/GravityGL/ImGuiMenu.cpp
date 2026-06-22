@@ -1052,7 +1052,6 @@ static bool CustomSliderFloat(const char *label, float *v, float min_val,
 
   ImVec2 cpos = ImGui::GetCursorScreenPos();
   float height = ImGui::GetFrameHeight();
-  float width = 250.0f;
   float t = (*v - min_val) / (max_val - min_val);
   if (t < 0.0f)
     t = 0.0f;
