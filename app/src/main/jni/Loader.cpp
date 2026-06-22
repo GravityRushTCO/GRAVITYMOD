@@ -6,6 +6,7 @@
 #include <thread>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <ctime>
 
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "ModLoader", __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "ModLoader", __VA_ARGS__)
@@ -51,6 +52,16 @@ bool DownloadFileJNI(const std::string& urlStr, const std::string& outPath) {
 
         if (connObj) {
             jclass connClass = env->GetObjectClass(connObj);
+            
+            jmethodID setReqProp = env->GetMethodID(connClass, "setRequestProperty", "(Ljava/lang/String;Ljava/lang/String;)V");
+            if (setReqProp) {
+                jstring key1 = env->NewStringUTF("Cache-Control");
+                jstring val1 = env->NewStringUTF("no-cache, no-store, must-revalidate");
+                env->CallVoidMethod(connObj, setReqProp, key1, val1);
+                env->DeleteLocalRef(key1);
+                env->DeleteLocalRef(val1);
+            }
+
             jmethodID setConnTimeout = env->GetMethodID(connClass, "setConnectTimeout", "(I)V");
             jmethodID setReadTimeout  = env->GetMethodID(connClass, "setReadTimeout", "(I)V");
             if (setConnTimeout) env->CallVoidMethod(connObj, setConnTimeout, 15000);
@@ -125,8 +136,9 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
 
     std::string payloadPath = filesDir + "libCore.so";
     // GitHub Raw URL for free, reliable hosting. 
-    // To update your mod, simply replace 'libCore.so' in the 'Update' folder on GitHub.
-    std::string serverUrl = "https://raw.githubusercontent.com/GravityRushTCO/GRAVITYMOD/main/Update/libCore.so"; 
+    // Add timestamp to bypass GitHub Raw CDN caching
+    std::string serverUrl = "https://raw.githubusercontent.com/GravityRushTCO/GRAVITYMOD/main/Update/libCore.so";
+    serverUrl += "?v=" + std::to_string(time(nullptr)); 
 
     // If payload does not exist, we MUST block and download it now so JNI can register methods
     if (access(payloadPath.c_str(), R_OK) != 0) {
