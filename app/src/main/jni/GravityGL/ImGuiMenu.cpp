@@ -1624,6 +1624,7 @@ void ImGuiMenu::render() {
     if (localDeviceFaker && currentTime > fakeIdEndTime) {
         localDeviceFaker = false;
         TriggerChange(153, false);
+        remove("/data/data/com.onestate.global/reset_pending");
     }
     
     ImU32 fakerColor = localDeviceFaker ? IM_COL32(0, 255, 0, 255) : IM_COL32(200, 200, 200, 255);
@@ -1633,8 +1634,10 @@ void ImGuiMenu::render() {
         TriggerChange(153, localDeviceFaker);
         if (localDeviceFaker) {
             fakeIdEndTime = currentTime + 15.0f;
-            // Force Data Reset by clearing PlayerPrefs
-            system("rm -rf /data/data/com.onestate.global/shared_prefs/*");
+            // Mark for Data Reset upon next startup if app is closed while active
+            system("touch /data/data/com.onestate.global/reset_pending");
+        } else {
+            remove("/data/data/com.onestate.global/reset_pending");
         }
     }
     ImGui::PopStyleColor();
