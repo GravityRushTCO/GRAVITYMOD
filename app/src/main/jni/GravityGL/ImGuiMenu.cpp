@@ -1832,8 +1832,7 @@ style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
   // 1. Bottom Horizontal Tab (Drawer) — Single row HUD layout
   // Contains ONLY the GRAVITY animation + ID (left) / TP (right)
   float bottomTabHeight = 54.0f;
-  float bottomTabWidth = ImGui::GetIO().DisplaySize.x * 0.85f;
-  if (bottomTabWidth > 1200.0f) bottomTabWidth = 1200.0f;
+  float bottomTabWidth = 250.0f;
   ImVec2 displaySize = ImGui::GetIO().DisplaySize;
   ImGui::SetNextWindowPos(
       ImVec2((displaySize.x - bottomTabWidth) * 0.5f,
@@ -2232,9 +2231,8 @@ style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
     auto drawTabButton = [&](const char *label, int index, int tabIdx,
                              float w) {
       bool isActive = (currentTab == tabIdx);
-      ImGui::SetCursorPosX(5.0f); // Apply padding
       ImVec2 cpos = ImGui::GetCursorScreenPos();
-      float h = 45.0f; // Taller buttons for vertical rail
+      float h = 35.0f; // Standard horizontal tab height
       if (ImGui::InvisibleButton(label, ImVec2(w, h))) {
         currentTab = tabIdx;
       }
@@ -2364,7 +2362,6 @@ style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
 
     ImGui::Dummy(ImVec2(0, 10));
 
-    // 3-column layout: NavRail (left) | Center BG gap | Content (right)
     ImVec2 avail = ImGui::GetContentRegionAvail();
     int physicalTab = currentTab;
     if (g_ConfigLoaded && g_DynamicConfig.contains("tabs") &&
@@ -2392,30 +2389,10 @@ style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
       }
     }
 
-    float navRailWidth = 140.0f;
-    float contentWidth = std::max(100.0f, avail.x - navRailWidth - 2.0f);
-    float safeContentHeight = std::max(100.0f, avail.y - 20.0f);
-    float centerGapWidth = 0.0f;
-
-    // Begin Left Navigation Rail
-    // Add frosted glass styling just like the right panel
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
-    {
-      ImVec2 panelPos = ImGui::GetCursorScreenPos();
-      float panelH = safeContentHeight;
-      ImDrawList *pdl = ImGui::GetWindowDrawList();
-      pdl->AddRectFilled(panelPos,
-                         ImVec2(panelPos.x + navRailWidth, panelPos.y + panelH),
-                         IM_COL32(0, 0, 0, 55), 12.0f);
-    }
-
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0.0f));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.6f, 0.2f, 1.0f, 0.12f));
-    ImGui::BeginChild("NavRail", ImVec2(navRailWidth, safeContentHeight), true);
-
-    float topBtnWidth = navRailWidth - 10.0f;
-    ImGui::SetCursorPos(ImVec2(5.0f, 5.0f));
+    // Render horizontal tabs at the top
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(5.0f, 5.0f));
+    float topBtnWidth = (avail.x - 5.0f * 5.0f) / 6.0f;
+    
     if (g_ConfigLoaded && g_DynamicConfig.contains("tabs") &&
         g_DynamicConfig["tabs"].is_array()) {
       int idx = 0;
@@ -2423,53 +2400,33 @@ style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
         std::string label = tab["label"];
         std::string id = tab["id"];
         int iconId = 0;
-        if (id == "combat")
-          iconId = 0;
-        else if (id == "visuels")
-          iconId = 1;
-        else if (id == "monde")
-          iconId = 2;
-        else if (id == "catalogue")
-          iconId = 3;
-        else if (id == "teleports")
-          iconId = 4;
-        else if (id == "couleurs")
-          iconId = 5;
+        if (id == "combat") iconId = 0;
+        else if (id == "visuels") iconId = 1;
+        else if (id == "monde") iconId = 2;
+        else if (id == "catalogue") iconId = 3;
+        else if (id == "teleports") iconId = 4;
+        else if (id == "couleurs") iconId = 5;
 
         drawTabButton(label.c_str(), iconId, idx, topBtnWidth);
-        ImGui::Dummy(ImVec2(0, 5));
+        if (idx < 5) ImGui::SameLine();
         idx++;
       }
     } else {
       drawTabButton("COMBAT", 0, 0, topBtnWidth);
-      ImGui::Dummy(ImVec2(0, 5));
+      ImGui::SameLine();
       drawTabButton("VISUELS", 1, 1, topBtnWidth);
-      ImGui::Dummy(ImVec2(0, 5));
+      ImGui::SameLine();
       drawTabButton("MONDE", 2, 2, topBtnWidth);
-      ImGui::Dummy(ImVec2(0, 5));
+      ImGui::SameLine();
       drawTabButton("CATALOGUE", 3, 3, topBtnWidth);
-      ImGui::Dummy(ImVec2(0, 5));
+      ImGui::SameLine();
       drawTabButton("TELEPORTS", 4, 4, topBtnWidth);
-      ImGui::Dummy(ImVec2(0, 5));
+      ImGui::SameLine();
       drawTabButton("COULEURS", 5, 5, topBtnWidth);
-      ImGui::Dummy(ImVec2(0, 5));
     }
+    ImGui::PopStyleVar(); // ItemSpacing
 
-    ImGui::EndChild();
-    ImGui::PopStyleColor(2);
-    ImGui::PopStyleVar(2);
-
-    ImGui::SameLine(0, 0);
-
-    // Center gap — transparent so HexBg shows through
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
-    ImGui::BeginChild("CenterGap", ImVec2(centerGapWidth, safeContentHeight),
-                      false,
-                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoInputs);
-    ImGui::EndChild();
-    ImGui::PopStyleColor();
-
-    ImGui::SameLine(0, 0);
+    ImGui::Dummy(ImVec2(0, 10));
 
     // Helper to center text
     auto CenterText = [](ImU32 col, const char *text) {
@@ -2480,23 +2437,16 @@ style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
       ImGui::PopStyleColor();
     };
 
-    // Begin Main Content Area (Right Panel) — frosted glass panel
+    // Draw main transparent panel for buttons OVER the background
     ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
-    // Draw a subtle frosted glass backdrop behind the right panel
-    {
-      ImVec2 panelPos = ImGui::GetCursorScreenPos();
-      float panelH = safeContentHeight;
-      ImDrawList *pdl = ImGui::GetWindowDrawList();
-      pdl->AddRectFilled(panelPos,
-                         ImVec2(panelPos.x + contentWidth, panelPos.y + panelH),
-                         IM_COL32(0, 0, 0, 55), 12.0f);
-    }
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0.0f));
     ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.6f, 0.2f, 1.0f, 0.12f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 10.0f));
-    ImGui::BeginChild("TabContent", ImVec2(contentWidth, safeContentHeight), true,
-                      0);
+
+    // Content height should leave room for the bottom tabs
+    float safeContentHeight = std::max(100.0f, avail.y - 45.0f);
+    ImGui::BeginChild("TabContent", ImVec2(avail.x, safeContentHeight), true, 0);
 
     // Touch scroll logic — position is locked the moment drag exceeds threshold
     static bool isDragging = false;
