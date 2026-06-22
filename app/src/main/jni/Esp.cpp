@@ -571,56 +571,16 @@ static void resolveLazy() {
 void Esp_NotifyLocalActor(void *ca) {
   if (!ca || !IsUnityObjectAlive(ca))
     return;
-  if (s_localActor == ca) {
-    s_lastLocalActorNotifyMs = nowMs();
-    return;
-  }
 
-  resolveLazy();
-  if (fn_get_transform && fn_get_position) {
-    void *tr = fn_get_transform(ca);
-    if (tr) {
-      V3 pos = {0, 0, 0};
-      fn_get_position(tr, &pos);
-      if (s_camValid) {
-        float dx = pos.x - s_camPos.x;
-        float dy = pos.y - s_camPos.y;
-        float dz = pos.z - s_camPos.z;
-        float distSq = dx * dx + dy * dy + dz * dz;
-        // Local player is always extremely close to the camera (now relaxed to 40m to allow zoomed out / driving)
-        if (distSq < 1600.0f) {
-          pthread_mutex_lock(&s_mtx);
-          bool shouldUpdate = false;
-          if (!s_localActor) {
-            shouldUpdate = true;
-          } else {
-            void *currTr = fn_get_transform(s_localActor);
-            if (currTr) {
-              V3 currPos = {0, 0, 0};
-              fn_get_position(currTr, &currPos);
-              float cdx = currPos.x - s_camPos.x;
-              float cdy = currPos.y - s_camPos.y;
-              float cdz = currPos.z - s_camPos.z;
-              float currDistSq = cdx * cdx + cdy * cdy + cdz * cdz;
-              if (distSq < currDistSq) {
-                shouldUpdate = true;
-              }
-            } else {
-              shouldUpdate = true;
-            }
-          }
-          if (shouldUpdate) {
-            E_LOGI("LocalActor identified via PreSimulationUpdate (Camera dist "
-                   "%.1fm): %p",
-                   sqrtf(distSq), ca);
-            s_localActor = ca;
-            s_lastLocalActorNotifyMs = nowMs();
-          }
-          pthread_mutex_unlock(&s_mtx);
-        }
-      }
-    }
+  // We are fed this from CharacterActor pre-simulation.
+  // We grab it directly without camera distance checks, as the camera method is flawed.
+  if (s_localActor != ca) {
+    pthread_mutex_lock(&s_mtx);
+    s_localActor = ca;
+    E_LOGI("LocalActor identified directly: %p", ca);
+    pthread_mutex_unlock(&s_mtx);
   }
+  s_lastLocalActorNotifyMs = nowMs();
 }
 
 static bool readActorPosition(void *actor, V3 *out) {
