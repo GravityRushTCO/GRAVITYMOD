@@ -50,8 +50,15 @@ namespace License {
     // Pour l'UI : animation de chargement (0.0 à 1.0)
     float GetCheckingProgress();
 
-    // Génère une clé valide (à utiliser depuis ton outil admin, PAS dans le mod)
-    // Inclus ici uniquement pour documentation du format
-    // std::string GenerateKey(const std::string& hwid, int durationDays);
+    // Récupérer la date d'expiration pour l'affichage (depuis Supabase)
+    const char* GetExpirationDate();
+    void SetExpirationDate(const std::string& dateStr);
+    std::string GetRemainingTime();
+
+    // Vérification de version
+    bool IsNewVersionAvailable();
+    const char* GetLatestVersion();
+
+    extern const std::string SUPABASE_ANON_KEY;
 
 } // namespace License

@@ -2247,21 +2247,10 @@ bool Teleport_ToPosition(float x, float y, float z, bool ignoreCooldown) {
   if (vehToTp) {
     g_LastLocalVehicle = vehToTp;
 
-    // Teleport the player first to find the true ground height via sweep!
-    if (fn_teleport) {
-      fn_teleport(actor, x, y, z);
-    } else if (fn_sweep_tp) {
-      fn_sweep_tp(actor, x, y, z);
-    }
-
-    // Read the player's new position which is now perfectly grounded
-    V3 groundPos = {x, y, z};
-    if (fn_get_position && actorTr) {
-      fn_get_position(actorTr, &groundPos);
-    }
-
-    // Teleport the vehicle to the true ground height + 0.5f safety
-    Esp_DirectVehicleTP(vehToTp, groundPos.x, groundPos.y, groundPos.z, true);
+    // Teleport the vehicle directly with a slight height offset to avoid clipping into the ground
+    // Do NOT call fn_teleport on the player while inside the car, it will eject or glitch them!
+    float safeY = y + 2.0f;
+    Esp_DirectVehicleTP(vehToTp, x, safeY, z, true);
 
     // Ensure vehicle wakes up after teleport!
     typedef void (*Rigidbody_set_velocity_Injected_t)(void *self, V3 *value);
@@ -2278,8 +2267,8 @@ bool Teleport_ToPosition(float x, float y, float z, bool ignoreCooldown) {
     }
 
     E_LOGI("Teleport_ToPosition: Esp_DirectVehicleTP called for vehicle at "
-           "grounded height: %.2f",
-           groundPos.y);
+           "safe height: %.2f",
+           safeY);
   } else {
     // Player is outside the vehicle. Teleport player first!
     extern bool g_NoClipEnabled;

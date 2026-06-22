@@ -5,6 +5,7 @@
 #include "GravityGL/Offsets.h"
 #include "HttpUtils.h"
 #include "Hwid.h"
+#include "LicenseSystem.h"
 #include "il2cpp_bridge.h"
 #include <android/log.h>
 #include <dlfcn.h>
@@ -632,14 +633,7 @@ static void hook_SetMapPosition(void *_this, V3 worldPosition, void *method) {
     double now = Esp_GetTimeMs();
     if (now - lastMapTpTime > 800.0) {
       lastMapTpTime = now;
-      extern bool g_PlayerInVehicle;
-      extern void *g_LastLocalVehicle;
-      if (g_PlayerInVehicle && g_LastLocalVehicle) {
-        Esp_DirectVehicleTP(g_LastLocalVehicle, worldPosition.x,
-                            worldPosition.y, worldPosition.z, true);
-      } else {
-        Teleport_ToPosition(worldPosition.x, worldPosition.y, worldPosition.z);
-      }
+      Teleport_ToPosition(worldPosition.x, worldPosition.y, worldPosition.z, true);
     }
   }
 
@@ -648,31 +642,54 @@ static void hook_SetMapPosition(void *_this, V3 worldPosition, void *method) {
   }
 }
 
-// DobbyInstrument handler to modify CheckpointFactory.CreateCheckpoint
-// arguments without breaking ABI (24 arguments)
-static void pre_CheckpointFactoryCreateCheckpoint(void *address,
-                                                  DobbyRegisterContext *ctx) {
-#if defined(__aarch64__)
-  extern bool g_DragCheckpointJob, g_DragCheckpointEvent, g_DragCheckpointQuest,
-      g_DragCheckpointOther, g_DragCheckpointToPlayer;
-  bool shouldDrag = g_DragCheckpointJob || g_DragCheckpointEvent ||
-                    g_DragCheckpointQuest || g_DragCheckpointOther ||
-                    g_DragCheckpointToPlayer;
+struct Quaternion { float x,y,z,w; };
+struct Color { float r,g,b,a; };
+struct NullableVector3 { V3 value; bool has_value; };
 
-  if (shouldDrag) {
-    V3 out = {0, 0, 0};
-    bool ok = Esp_GetLocalPosition(&out);
-    if (!ok) {
-      ok = Esp_GetCameraPosition(&out);
-    }
-    if (ok) {
-      // AAPCS64 HFA struct (Vector3) is passed in s0, s1, s2
-      ctx->floating.q[0].f.f1 = out.x;
-      ctx->floating.q[1].f.f1 = out.y;
-      ctx->floating.q[2].f.f1 = out.z;
-    }
+typedef void* (*CheckpointFactory_CreateCheckpoint_t)(
+    void* _this, 
+    V3 position, Quaternion rotation, Color color, 
+    void* text, void* iconName, void* activityIcon, void* activityText, void* activityDescription, 
+    int model, int type, int dimension, float radius, 
+    bool allowPed, bool allowVehicle, bool withBlip, bool highPriority, 
+    bool ignoreActivityCreation, bool destroyActivityOnDimensionChange, bool blockPedOnEnter, 
+    void* onEnterAction, void* onExitAction, 
+    NullableVector3 checkpointRotatePedOnEnterPosition, bool createLegendItem,
+    void* method);
+
+static CheckpointFactory_CreateCheckpoint_t orig_CreateCheckpoint = nullptr;
+static void* hook_CreateCheckpoint(
+    void* _this, 
+    V3 position, Quaternion rotation, Color color, 
+    void* text, void* iconName, void* activityIcon, void* activityText, void* activityDescription, 
+    int model, int type, int dimension, float radius, 
+    bool allowPed, bool allowVehicle, bool withBlip, bool highPriority, 
+    bool ignoreActivityCreation, bool destroyActivityOnDimensionChange, bool blockPedOnEnter, 
+    void* onEnterAction, void* onExitAction, 
+    NullableVector3 checkpointRotatePedOnEnterPosition, bool createLegendItem,
+    void* method) 
+{
+  V3 dragged = {0,0,0};
+  
+  // Drag all checkpoints to the player if they have any of the drag features enabled
+  if (GetDraggedMarkerPosition(position, &dragged, DragType::Job) ||
+      GetDraggedMarkerPosition(position, &dragged, DragType::Quest) ||
+      GetDraggedMarkerPosition(position, &dragged, DragType::Other)) {
+      position = dragged;
   }
-#endif
+  
+  if (orig_CreateCheckpoint) {
+      return orig_CreateCheckpoint(
+          _this, position, rotation, color, 
+          text, iconName, activityIcon, activityText, activityDescription, 
+          model, type, dimension, radius, 
+          allowPed, allowVehicle, withBlip, highPriority, 
+          ignoreActivityCreation, destroyActivityOnDimensionChange, blockPedOnEnter, 
+          onEnterAction, onExitAction, 
+          checkpointRotatePedOnEnterPosition, createLegendItem, 
+          method);
+  }
+  return nullptr;
 }
 
 extern "C" void *g_LastFindGoalInstance = nullptr;
@@ -2738,75 +2755,52 @@ static bool hook_TryGetNearVehicleSeat(void *_this, V3 position, void *vehiclesK
                                        hook_PedWeaponCreateSystem_OnUpdate(
                                            void *self, float deltaTime,
                                            void *method) {
-                                         if (isValidPointer(self) &&
-                                             isValidPointer(
-                                                 g_PedStreamingProviderInstance) &&
-                                             fn_TryGetIndex) {
-                                           int localPlayerId = -1;
-                                           void *playerStorage = *(
-                                               void *
-                                                   *)((char *)
-                                                          g_PedStreamingProviderInstance +
-                                                      0x18);
-                                           if (isValidPointer(playerStorage)) {
-                                             unsigned long long
-                                                 localPlayerEntityVal = *(
-                                                     unsigned long long
-                                                         *)((char *)
-                                                                playerStorage +
-                                                            0x20);
-                                             if (localPlayerEntityVal != 0 &&
-                                                 fn_Entity_get_Id) {
-                                               localPlayerId = fn_Entity_get_Id(
-                                                   &localPlayerEntityVal);
-                                             }
-                                           }
+                                         if (isValidPointer(self) && fn_TryGetIndex) {
+                                           // Use global ped entity initialized by the clothes hook
+                                           if (g_LocalPlayerEntityId != -1 && g_ForceWeaponApply &&
+                                               g_WeaponReplaceVal > 0 && g_WeaponReplaceVal < weaponCatalogSize) {
+                                             g_ForceWeaponApply = false; // consume flag
 
-                                           if (localPlayerId != -1 &&
-                                               (g_ForceWeaponApply ||
-                                                g_WeaponReplaceVal > 0) &&
-                                               g_WeaponReplaceVal > 0 &&
-                                               g_WeaponReplaceVal <
-                                                   weaponCatalogSize) {
-                                             g_ForceWeaponApply =
-                                                 false; // consume flag
-
-                                             void *stashPedWeapon = *(
-                                                 void **)((char *)self + 0x58);
-                                             if (isValidPointer(
-                                                     stashPedWeapon)) {
-                                               void *map = *(
-                                                   void **)((char *)
-                                                                stashPedWeapon +
-                                                            0x28);
-                                               void *dataArray = *(
-                                                   void **)((char *)
-                                                                stashPedWeapon +
-                                                            0x30);
-                                               if (isValidPointer(map) &&
-                                                   isValidPointer(dataArray)) {
+                                             void *stashPedWeapon = *(void **)((char *)self + 0x58);
+                                             if (isValidPointer(stashPedWeapon)) {
+                                               void *map = *(void **)((char *)stashPedWeapon + 0x20); // map is at 0x20
+                                               void *dataArray = *(void **)((char *)stashPedWeapon + 0x28); // data is at 0x28
+                                               if (isValidPointer(map) && isValidPointer(dataArray)) {
                                                  int slotIndex = -1;
-                                                 if (fn_TryGetIndex(
-                                                         map, localPlayerId,
-                                                         &slotIndex)) {
-                                                   char *pedWeaponPtr =
-                                                       ((char *)dataArray +
-                                                        0x20) +
-                                                       slotIndex * 24;
-                                                   int *idPtr =
-                                                       (int *)pedWeaponPtr;
-                                                   *idPtr =
-                                                       weaponCatalog
-                                                           [g_WeaponReplaceVal]
-                                                               .idVal;
+                                                 if (fn_TryGetIndex(map, g_LocalPlayerEntityId, &slotIndex)) {
+                                                   // PedWeapon struct size is 0x18 (24 bytes)
+                                                   char *pedWeaponPtr = ((char *)dataArray + 0x20) + slotIndex * 24;
+                                                   int *idPtr = (int *)pedWeaponPtr;
+                                                   *idPtr = weaponCatalog[g_WeaponReplaceVal].idVal;
+                                                   
+                                                   int *upgradeLevelPtr = (int *)(pedWeaponPtr + 0x14);
+                                                   *upgradeLevelPtr = 100; // Max Level as requested!
+                                                   
+                                                   LOGI("hook_PedWeaponCreateSystem_OnUpdate: Successfully replaced weapon ID to %d with Level %d", *idPtr, *upgradeLevelPtr);
+
+                                                   // Trigger Stash<PedUpdateWeapon>::Add to force the system to refresh visuals
+                                                   void *stashPedUpdateWeapon = *(void **)((char *)self + 0x60);
+                                                   if (isValidPointer(stashPedUpdateWeapon)) {
+                                                     void *stashKlass = *(void **)stashPedUpdateWeapon;
+                                                     if (stashKlass) {
+                                                       static void *addMethod = nullptr;
+                                                       if (!addMethod && g_il2cpp.ready) {
+                                                         addMethod = g_il2cpp.GetMethod(stashKlass, "Add", 1);
+                                                       }
+                                                       if (addMethod) {
+                                                         void *params[] = { &g_LocalPlayerEntityVal };
+                                                         g_il2cpp.Invoke(addMethod, stashPedUpdateWeapon, params);
+                                                         LOGI("hook_PedWeaponCreateSystem_OnUpdate: Successfully invoked Stash<PedUpdateWeapon>::Add");
+                                                       }
+                                                     }
+                                                   }
                                                  }
                                                }
                                              }
                                            }
                                          }
                                          if (orig_PedWeaponCreateSystem_OnUpdate) {
-                                           orig_PedWeaponCreateSystem_OnUpdate(
-                                               self, deltaTime, method);
+                                           orig_PedWeaponCreateSystem_OnUpdate(self, deltaTime, method);
                                          }
                                        }
 
@@ -3192,119 +3186,122 @@ static bool hook_TryGetNearVehicleSeat(void *_this, V3 position, void *vehiclesK
                                                            clothesMap) &&
                                                        isValidPointer(
                                                            clothesData)) {
-                                                     int clothesSlot = -1;
-                                                     if (fn_TryGetIndex(
-                                                             clothesMap,
-                                                             g_LocalPlayerEntityId,
-                                                             &clothesSlot)) {
-                                                       uint16_t *clothesValPtr =
-                                                           (uint16_t
-                                                                *)((char *)
-                                                                       clothesData +
-                                                                   0x20) +
-                                                           clothesSlot;
-                                                       if (isValidPointer(
-                                                               clothesValPtr)) {
-                                                         uint16_t oldVal =
-                                                             *clothesValPtr;
-                                                         *clothesValPtr =
-                                                             (uint16_t)skinCatalog
-                                                                 [g_SkinReplaceVal]
-                                                                     .idVal;
-                                                         if (g_ForceSkinApply) {
-                                                           LOGI(
-                                                               "hook_"
-                                                               "PedUpdateClothe"
-                                                               "sSystem_"
-                                                               "OnUpdate: "
-                                                               "Replaced skin "
-                                                               "from %d to %d "
-                                                               "for entityId "
-                                                               "%d",
-                                                               oldVal,
-                                                               *clothesValPtr,
-                                                               g_LocalPlayerEntityId);
-                                                         }
-                                                       }
-                                                     } else {
-                                                       if (g_ForceSkinApply)
-                                                         LOGI(
-                                                             "hook_"
-                                                             "PedUpdateClothesS"
-                                                             "ystem_OnUpdate: "
-                                                             "fn_TryGetIndex "
-                                                             "failed for "
-                                                             "g_"
-                                                             "LocalPlayerEntity"
-                                                             "Id %d",
-                                                             g_LocalPlayerEntityId);
-                                                     }
-                                                   } else {
-                                                     if (g_ForceSkinApply)
-                                                       LOGI("hook_"
-                                                            "PedUpdateClothesSy"
-                                                            "stem_OnUpdate: "
-                                                            "clothesMap or "
-                                                            "clothesData "
-                                                            "invalid");
-                                                   }
-                                                 }
-                                               }
-                                             }
+                                                      int clothesSlot = -1;
+                                                      int targetEntityId = g_LocalPlayerEntityId;
+                                                      
+                                                      // Fetch playerEntityId from playerStorage to use as fallback if needed
+                                                      int playerEntityIdFallback = -1;
+                                                      void *playerStorageFallback = *(void **)((char *)ped + 0x18);
+                                                      if (isValidPointer(playerStorageFallback)) {
+                                                          MorpehEntity localPlayerEntity = *(MorpehEntity *)((char *)playerStorageFallback + 0x20);
+                                                          if (localPlayerEntity.id_gen != 0 && fn_Entity_get_Id) {
+                                                              playerEntityIdFallback = fn_Entity_get_Id(&localPlayerEntity);
+                                                          }
+                                                      }
 
-                                             // --- Étape 2 : signal
-                                             // PedClothesChanged (throttle 30
-                                             // frames) ---
-                                             static int s_clothesSignalFrames =
-                                                 0;
-                                             if (g_ForceSkinApply ||
-                                                 s_clothesSignalFrames == 0) {
+                                                      if (!fn_TryGetIndex(clothesMap, targetEntityId, &clothesSlot)) {
+                                                          if (playerEntityIdFallback != -1) {
+                                                              targetEntityId = playerEntityIdFallback;
+                                                          }
+                                                      }
+                                                      
+                                                      if (fn_TryGetIndex(clothesMap, targetEntityId, &clothesSlot)) {
+                                                        uint16_t *clothesValPtr = (uint16_t *)((char *)clothesData + 0x20) + clothesSlot;
+                                                        if (isValidPointer(clothesValPtr)) {
+                                                          uint16_t oldVal = *clothesValPtr;
+                                                          *clothesValPtr = (uint16_t)skinCatalog[g_SkinReplaceVal].idVal;
+                                                          
+                                                          // --- Synchroniser le rig (ElementModel) ---
+                                                          void *stashModel = *(void **)((char *)ped + 0x80);
+                                                          if (isValidPointer(stashModel)) {
+                                                            void *modelMap = *(void **)((char *)stashModel + 0x20);
+                                                            void *modelData = *(void **)((char *)stashModel + 0x28);
+                                                            if (isValidPointer(modelMap) && isValidPointer(modelData)) {
+                                                              int modelSlot = -1;
+                                                              if (fn_TryGetIndex(modelMap, targetEntityId, &modelSlot)) {
+                                                                int *modelValPtr = (int *)((char *)modelData + 0x20) + modelSlot;
+                                                                if (isValidPointer(modelValPtr)) {
+                                                                  *modelValPtr = skinCatalog[g_SkinReplaceVal].idVal;
+                                                                }
+                                                              }
+                                                            }
+                                                          }
+
+                                                          if (g_ForceSkinApply) {
+                                                            LOGI("hook_PedUpdateClothesSystem_OnUpdate: Replaced skin and Model val from %d to %d", oldVal, skinCatalog[g_SkinReplaceVal].idVal);
+                                                          }
+                                                        }
+                                                      } else {
+                                                        if (g_ForceSkinApply)
+                                                          LOGI("hook_PedUpdateClothesSystem_OnUpdate: fn_TryGetIndex failed for g_LocalPlayerEntityId %d", g_LocalPlayerEntityId);
+                                                      }
+                                                    } else {
+                                                      if (g_ForceSkinApply)
+                                                        LOGI("hook_PedUpdateClothesSystem_OnUpdate: clothesMap or clothesData invalid");
+                                                    }
+                                                  }
+                                                }
+                                              }
+
+                                              // --- Étape 2 : signal
+                                              // PedClothesChanged (throttle 30
+                                              // frames) ---
+                                             static int s_clothesSignalFrames = 0;
+
+                                             if (g_ForceSkinApply || s_clothesSignalFrames == 0) {
                                                g_ForceSkinApply = false;
-                                               s_clothesSignalFrames =
-                                                   30; // resigale toutes les 30
-                                                       // frames
+                                               s_clothesSignalFrames = 30; // resigale toutes les 30 frames
 
-                                               void *stashObj = *(
-                                                   void *
-                                                       *)((char *)self +
-                                                          0x38); // Stash<PedClothesChanged>
+                                               // 1. Remove PedClothesBinded so the system doesn't think the mesh is already up-to-date
+                                               void *pedClothesStorage = *(void **)((char *)self + 0x10);
+                                               if (isValidPointer(pedClothesStorage)) {
+                                                   void *stashBinded = *(void **)((char *)pedClothesStorage + 0x60);
+                                                   if (isValidPointer(stashBinded)) {
+                                                       void *stashKlass = *(void **)stashBinded;
+                                                       if (stashKlass) {
+                                                           static void *removeMethod = nullptr;
+                                                           if (!removeMethod && g_il2cpp.ready) {
+                                                               removeMethod = g_il2cpp.GetMethod(stashKlass, "Remove", 1);
+                                                           }
+                                                           if (removeMethod) {
+                                                               void *params[] = { &g_LocalPlayerEntityVal };
+                                                               g_il2cpp.Invoke(removeMethod, stashBinded, params);
+                                                               LOGI("hook_PedUpdateClothesSystem_OnUpdate: Stash<PedClothesBinded>::Remove");
+                                                           }
+                                                       }
+                                                   }
+                                               }
+
+                                               // 2. Explicitly add PedLoadClothes to trigger the async Addressable download
+                                               void *stashLoadClothes = *(void **)((char *)self + 0x28);
+                                               if (isValidPointer(stashLoadClothes)) {
+                                                   void *stashKlass = *(void **)stashLoadClothes;
+                                                   if (stashKlass) {
+                                                       static void *addMethod = nullptr;
+                                                       if (!addMethod && g_il2cpp.ready) {
+                                                           addMethod = g_il2cpp.GetMethod(stashKlass, "Add", 1);
+                                                       }
+                                                       if (addMethod) {
+                                                           void *params[] = { &g_LocalPlayerEntityVal };
+                                                           g_il2cpp.Invoke(addMethod, stashLoadClothes, params);
+                                                           LOGI("hook_PedUpdateClothesSystem_OnUpdate: Stash<PedLoadClothes>::Add");
+                                                       }
+                                                   }
+                                               }
+
+                                               // 3. Keep PedClothesChanged for the pipeline validation
+                                               void *stashObj = *(void **)((char *)self + 0x38); // Stash<PedClothesChanged>
                                                if (isValidPointer(stashObj)) {
-                                                 void *stashKlass =
-                                                     *(void **)stashObj;
+                                                 void *stashKlass = *(void **)stashObj;
                                                  if (stashKlass) {
-                                                   static void *addMethod =
-                                                       nullptr;
-                                                   if (!addMethod &&
-                                                       g_il2cpp.ready) {
-                                                     addMethod =
-                                                         g_il2cpp.GetMethod(
-                                                             stashKlass, "Add",
-                                                             1);
+                                                   static void *addMethod = nullptr;
+                                                   if (!addMethod && g_il2cpp.ready) {
+                                                     addMethod = g_il2cpp.GetMethod(stashKlass, "Add", 1);
                                                    }
                                                    if (addMethod) {
-                                                     void *params[] = {
-                                                         &g_LocalPlayerEntityVal};
-                                                     g_il2cpp.Invoke(addMethod,
-                                                                     stashObj,
-                                                                     params);
-                                                     if (g_ForceSkinApply)
-                                                       LOGI("hook_"
-                                                            "PedUpdateClothesSy"
-                                                            "stem_OnUpdate: "
-                                                            "Successfully "
-                                                            "invoked "
-                                                            "Stash<"
-                                                            "PedClothesChanged>"
-                                                            "::Add");
-                                                   } else {
-                                                     if (g_ForceSkinApply)
-                                                       LOGI("hook_"
-                                                            "PedUpdateClothesSy"
-                                                            "stem_OnUpdate: "
-                                                            "Could not find "
-                                                            "Stash<"
-                                                            "PedClothesChanged>"
-                                                            "::Add method!");
+                                                     void *params[] = { &g_LocalPlayerEntityVal };
+                                                     g_il2cpp.Invoke(addMethod, stashObj, params);
+                                                     LOGI("hook_PedUpdateClothesSystem_OnUpdate: Successfully invoked Stash<PedClothesChanged>::Add");
                                                    }
                                                  }
                                                }
@@ -3567,6 +3564,17 @@ static bool hook_TryGetNearVehicleSeat(void *_this, V3 position, void *vehiclesK
                                          // false lock
                                          extern JavaVM *g_GravityJVM;
                                          HttpUtils::Init(g_GravityJVM);
+
+                                         // Initialize License System
+                                         {
+                                           char dataDir[256];
+                                           std::string appDataPath = "";
+                                           if (getMyAppDataDir(dataDir, sizeof(dataDir)) > 0) {
+                                             appDataPath = std::string(dataDir) + "/";
+                                           }
+                                           std::string hwid = GetDeviceHWID();
+                                           License::Init(appDataPath, hwid);
+                                         }
 
                                          // Initialize Protection Thread and
                                          // HWID Check asynchronously
@@ -3895,14 +3903,10 @@ static bool hook_TryGetNearVehicleSeat(void *_this, V3 position, void *vehiclesK
                                                  hook_SetMapPosition,
                                              (dobby_dummy_func_t
                                                   *)&orig_SetMapPosition);
-                                         // DISABLED to prevent Job launch crash
-                                         // (DobbyInstrument SIMD register
-                                         // corruption)
-                                         int rCheckpointFactory = 0;
-                                         /* DobbyInstrument((void *)(g_base +
-                                            RVA_CheckpointFactory_CreateCheckpoint),
-                                                             pre_CheckpointFactoryCreateCheckpoint);
-                                          */
+                                         int rCheckpointFactory = DobbyHook(
+                                             (void *)(g_base + RVA_CheckpointFactory_CreateCheckpoint),
+                                             (dobby_dummy_func_t)hook_CreateCheckpoint,
+                                             (dobby_dummy_func_t *)&orig_CreateCheckpoint);
                                          int rSeat = DobbyHook(
                                              (void
                                                   *)(g_base +

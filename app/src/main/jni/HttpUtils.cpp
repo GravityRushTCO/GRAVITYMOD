@@ -1,8 +1,10 @@
 #include "HttpUtils.h"
 #include "GravityServerConfig.h"
+#include "LicenseSystem.h"
 #include <thread>
 #include <atomic>
 #include <android/log.h>
+#include "Includes/obfuscate.h"
 
 #define LOG_TAG "GravityHTTP"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
@@ -87,17 +89,38 @@ static std::string DoHttpRequest(const std::string& urlStr,
     if (setMethod && jMethod) env->CallVoidMethod(connObj, setMethod, jMethod);
     if (env->ExceptionCheck()) env->ExceptionClear();
 
+    jmethodID setProp = env->GetMethodID(connClass, "setRequestProperty", "(Ljava/lang/String;Ljava/lang/String;)V");
+    if (setProp) {
+        if (method == "POST" && !jsonBody.empty()) {
+            jstring k1 = env->NewStringUTF("Content-Type");
+            jstring v1 = env->NewStringUTF("application/json; charset=utf-8");
+            env->CallVoidMethod(connObj, setProp, k1, v1);
+            env->DeleteLocalRef(k1); env->DeleteLocalRef(v1);
+        }
+
+        // Supabase Authentication Header injection (for any request method)
+        if (urlStr.find((const char*)OBFUSCATE("supabase.co")) != std::string::npos) {
+            std::string anon_key = License::SUPABASE_ANON_KEY;
+
+            jstring k2 = env->NewStringUTF((const char*)OBFUSCATE("apikey"));
+            jstring v2 = env->NewStringUTF(anon_key.c_str());
+            env->CallVoidMethod(connObj, setProp, k2, v2);
+            env->DeleteLocalRef(k2); env->DeleteLocalRef(v2);
+
+            // Omit Authorization header unless the key starts with "eyJ" (JWT format)
+            if (anon_key.size() >= 3 && anon_key[0] == 'e' && anon_key[1] == 'y' && anon_key[2] == 'J') {
+                jstring k3 = env->NewStringUTF((const char*)OBFUSCATE("Authorization"));
+                std::string bearer = std::string((const char*)OBFUSCATE("Bearer ")) + anon_key;
+                jstring v3 = env->NewStringUTF(bearer.c_str());
+                env->CallVoidMethod(connObj, setProp, k3, v3);
+                env->DeleteLocalRef(k3); env->DeleteLocalRef(v3);
+            }
+        }
+    }
+
     if (method == "POST" && !jsonBody.empty()) {
         jmethodID setDoOut = env->GetMethodID(connClass, "setDoOutput", "(Z)V");
         if (setDoOut) env->CallVoidMethod(connObj, setDoOut, JNI_TRUE);
-
-        jmethodID setProp = env->GetMethodID(connClass, "setRequestProperty", "(Ljava/lang/String;Ljava/lang/String;)V");
-        if (setProp) {
-            jstring k = env->NewStringUTF("Content-Type");
-            jstring v = env->NewStringUTF("application/json; charset=utf-8");
-            env->CallVoidMethod(connObj, setProp, k, v);
-            env->DeleteLocalRef(k); env->DeleteLocalRef(v);
-        }
 
         jmethodID getOut = env->GetMethodID(connClass, "getOutputStream", "()Ljava/io/OutputStream;");
         jobject outStream = getOut ? env->CallObjectMethod(connObj, getOut) : nullptr;
@@ -146,6 +169,25 @@ static std::string DoHttpRequest(const std::string& urlStr,
         }
     } else if (respCode > 0) {
         LOGE("HTTP %s → %d", urlStr.c_str(), respCode);
+        jmethodID getErr = env->GetMethodID(connClass, "getErrorStream", "()Ljava/io/InputStream;");
+        jobject errStream = getErr ? env->CallObjectMethod(connObj, getErr) : nullptr;
+        if (env->ExceptionCheck()) { env->ExceptionClear(); errStream = nullptr; }
+        if (errStream) {
+            jclass inCls = env->GetObjectClass(errStream);
+            jmethodID readM  = env->GetMethodID(inCls, "read",  "([B)I");
+            jmethodID closeM = env->GetMethodID(inCls, "close", "()V");
+            jbyteArray buf = env->NewByteArray(4096);
+            int n;
+            while (readM && (n = env->CallIntMethod(errStream, readM, buf)) > 0) {
+                jbyte* b = env->GetByteArrayElements(buf, nullptr);
+                responseData.append((char*)b, n);
+                env->ReleaseByteArrayElements(buf, b, JNI_ABORT);
+                if (env->ExceptionCheck()) { env->ExceptionClear(); break; }
+            }
+            if (closeM) env->CallVoidMethod(errStream, closeM);
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            env->DeleteLocalRef(buf); env->DeleteLocalRef(inCls); env->DeleteLocalRef(errStream);
+        }
     }
 
     if (jMethod) env->DeleteLocalRef(jMethod);

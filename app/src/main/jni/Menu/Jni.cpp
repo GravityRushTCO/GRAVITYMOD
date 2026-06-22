@@ -56,8 +56,8 @@ void CheckOverlayPermission(JNIEnv *env, jclass clazz, jobject ctx) {
         threadStarted = true;
     }
 
-    LOGI("JNI: Starting service...");
-    startService(env, ctx);
+    // LOGI("JNI: Starting service...");
+    // startService(env, ctx);
 }
 
 int get_api_sdk(JNIEnv *env) {
