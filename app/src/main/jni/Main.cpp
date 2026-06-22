@@ -2384,10 +2384,10 @@ static bool hook_TryGetNearVehicleSeat(void *_this, V3 position, void *vehiclesK
                                              if (isValidPointer(stashModel)) {
                                                void *modelMap =
                                                    *(void **)((char *)stashModel +
-                                                              0x28);
+                                                              0x20); // 0x20 is map
                                                void *modelData =
                                                    *(void **)((char *)stashModel +
-                                                              0x30);
+                                                              0x28); // 0x28 is data
                                                if (isValidPointer(modelMap) &&
                                                    isValidPointer(modelData)) {
                                                  int modelSlot = -1;
@@ -2691,10 +2691,10 @@ static bool hook_TryGetNearVehicleSeat(void *_this, V3 position, void *vehiclesK
                                                if (isValidPointer(stashModel)) {
                                                  void *modelMap = *(
                                                      void **)((char *)stashModel +
-                                                              0x28);
+                                                              0x20); // 0x20 is map
                                                  void *modelData = *(
                                                      void **)((char *)stashModel +
-                                                              0x30);
+                                                              0x28); // 0x28 is data
                                                  if (isValidPointer(modelMap) &&
                                                      isValidPointer(modelData)) {
                                                    int modelSlot = -1;
