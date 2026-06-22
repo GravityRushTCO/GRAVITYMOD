@@ -2906,27 +2906,27 @@ void ImGuiMenu::render() {
         // Fallback rendering
         if (physicalTab == 0) {
           ImGui::Columns(2, "AimbotCols", false);
-          ImGui::SetColumnWidth(0, ImGui::GetWindowWidth() * 0.55f);
+          ImGui::SetColumnWidth(0, ImGui::GetWindowWidth() * 0.45f);
           
-          CenterText(GetGradientColorU32(0.3f), TR("AIMBOT & ASSISTANCE"));
+          CenterText(GetGradientColorU32(0.3f), TR("BOUTONS & TOGGLES"));
           ImGui::Dummy(ImVec2(0, 5));
           RenderFeature(120); // Activer Aimbot
           RenderFeature(132); // Tirer a travers les murs
           RenderFeature(184); // Verification de visibilite
-          RenderFeature(185); // Lissage de visee (Force)
           RenderFeature(186); // AimLock Camera
-          RenderFeature(183); // Os cible
-          RenderFeature(421); // Speed Multiplier
-          
-          ImGui::NextColumn();
-          CenterText(GetGradientColorU32(0.6f), TR("CIBLE & AUTO-FOLLOW"));
-          ImGui::Dummy(ImVec2(0, 5));
           RenderFeature(300); // Suivre Joueur/Voiture Auto
           RenderFeature(306); // Coller Voiture (Sticky Car)
-          RenderFeature(302); // Distance de suivi
-          RenderFeature(303); // Hauteur Auto-Follow
           RenderFeature(305); // Changer Cible
           RenderFeature(304); // TP Voiture vers Cible
+          
+          ImGui::NextColumn();
+          CenterText(GetGradientColorU32(0.6f), TR("PARAMETRES & CURSEURS"));
+          ImGui::Dummy(ImVec2(0, 5));
+          RenderFeature(183); // Os cible
+          RenderFeature(185); // Lissage de visee (Force)
+          RenderFeature(421); // Speed Multiplier
+          RenderFeature(302); // Distance de suivi
+          RenderFeature(303); // Hauteur Auto-Follow
           RenderFeature(307); // Hauteur TP Cible
           ImGui::Columns(1);
         } else if (physicalTab == 1) {
