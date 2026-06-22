@@ -1584,7 +1584,7 @@ void ImGuiMenu::render() {
 
   // 1. Right Lateral Vertical Tab (Drawer Tab) - Draggable!
   float rightTabWidth = 40.0f;
-  float rightTabHeight = 220.0f;
+  float rightTabHeight = 310.0f; // Increased height for buttons
   ImVec2 displaySize = ImGui::GetIO().DisplaySize;
   ImGui::SetNextWindowPos(ImVec2(displaySize.x - rightTabWidth - 10,
                                  (displaySize.y - rightTabHeight) * 0.5f),
@@ -1613,7 +1613,33 @@ void ImGuiMenu::render() {
         (void *)(intptr_t)drawerBg.getTexture(), winPos,
         ImVec2(winPos.x + winSize.x, winPos.y + winSize.y), ImVec2(0, 1),
         ImVec2(1, 0));
-    if (ImGui::IsWindowHovered() && ImGui::IsMouseReleased(0)) {
+        
+    // Faux ID Telephone Button
+    ImGui::SetCursorPos(ImVec2(5, 10));
+    static bool localDeviceFaker = false;
+    static float fakeIdEndTime = 0.0f;
+    float currentTime = ImGui::GetTime();
+    
+    // Auto disable after 15 seconds
+    if (localDeviceFaker && currentTime > fakeIdEndTime) {
+        localDeviceFaker = false;
+        TriggerChange(153, false);
+    }
+    
+    ImU32 fakerColor = localDeviceFaker ? IM_COL32(0, 255, 0, 255) : IM_COL32(200, 200, 200, 255);
+    ImGui::PushStyleColor(ImGuiCol_Text, fakerColor);
+    if (ImGui::Button("ID", ImVec2(30, 25))) {
+        localDeviceFaker = !localDeviceFaker;
+        TriggerChange(153, localDeviceFaker);
+        if (localDeviceFaker) {
+            fakeIdEndTime = currentTime + 15.0f;
+            // Force Data Reset by clearing PlayerPrefs
+            system("rm -rf /data/data/com.onestate.global/shared_prefs/*");
+        }
+    }
+    ImGui::PopStyleColor();
+
+    if (ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered() && ImGui::IsMouseReleased(0)) {
       ImVec2 drag = ImGui::GetMouseDragDelta(0);
       if (abs(drag.x) < 5.0f && abs(drag.y) < 5.0f) {
         m_open = !m_open;
@@ -1636,7 +1662,7 @@ void ImGuiMenu::render() {
     drawList->AddText(chevronTopPos, chevronPulseCol, "^");
 
     const char *letters[] = {"G", "R", "A", "V", "I", "T", "Y"};
-    float startY = winPos.y + 40.0f;
+    float startY = winPos.y + 70.0f; // Shifted down for ID button
     for (int i = 0; i < 7; i++) {
       ImVec2 textSize = ImGui::CalcTextSize(letters[i]);
       float cx = winPos.x + (rightTabWidth - textSize.x) * 0.5f;
@@ -1675,10 +1701,14 @@ void ImGuiMenu::render() {
       }
     }
 
-    ImVec2 chevronBottomPos =
-        ImVec2(winPos.x + (rightTabWidth - ImGui::CalcTextSize("v").x) * 0.5f,
-               winPos.y + rightTabHeight - 25);
-    drawList->AddText(chevronBottomPos, chevronCol, "v");
+    // TP Carte Button
+    ImGui::SetCursorPos(ImVec2(5, rightTabHeight - 35));
+    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 100, 100, 255));
+    if (ImGui::Button("TP", ImVec2(30, 25))) {
+        TriggerChange(228);
+    }
+    ImGui::PopStyleColor();
+
     ImGui::SetWindowFontScale(1.0f);
   }
   ImGui::End();
