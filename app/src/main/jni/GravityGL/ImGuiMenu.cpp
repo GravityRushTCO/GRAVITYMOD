@@ -1827,9 +1827,9 @@ style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
 
   // 1. Bottom Horizontal Tab (Drawer) — Single row HUD layout
   // Contains ONLY the GRAVITY animation + ID (left) / TP (right)
-  float bottomTabHeight  = 54.0f;
-  float bottomTabWidth = ImGui::GetIO().DisplaySize.x * 0.6f;
-  if (bottomTabWidth > 600.0f) bottomTabWidth = 600.0f;
+  float bottomTabHeight = 54.0f;
+  float bottomTabWidth = ImGui::GetIO().DisplaySize.x * 0.85f;
+  if (bottomTabWidth > 1200.0f) bottomTabWidth = 1200.0f;
   ImVec2 displaySize = ImGui::GetIO().DisplaySize;
   ImGui::SetNextWindowPos(
       ImVec2((displaySize.x - bottomTabWidth) * 0.5f,
@@ -2389,7 +2389,8 @@ style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
     }
 
     float navRailWidth = 140.0f;
-    float contentWidth = avail.x - navRailWidth - 16.0f;
+    float contentWidth = std::max(100.0f, avail.x - navRailWidth - 16.0f);
+    float safeContentHeight = std::max(100.0f, avail.y - 20.0f);
     float centerGapWidth = 0.0f;
 
     // Begin Left Navigation Rail
@@ -2398,7 +2399,7 @@ style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 12.0f);
     {
       ImVec2 panelPos = ImGui::GetCursorScreenPos();
-      float panelH = avail.y - 20.0f;
+      float panelH = safeContentHeight;
       ImDrawList *pdl = ImGui::GetWindowDrawList();
       pdl->AddRectFilled(panelPos,
                          ImVec2(panelPos.x + navRailWidth, panelPos.y + panelH),
@@ -2407,7 +2408,7 @@ style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
 
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0.0f));
     ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.6f, 0.2f, 1.0f, 0.12f));
-    ImGui::BeginChild("NavRail", ImVec2(navRailWidth, avail.y - 20.0f), true);
+    ImGui::BeginChild("NavRail", ImVec2(navRailWidth, safeContentHeight), true);
 
     float topBtnWidth = navRailWidth - 10.0f;
     ImGui::SetCursorPos(ImVec2(5.0f, 5.0f));
@@ -2458,7 +2459,7 @@ style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
 
     // Center gap — transparent so HexBg shows through
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
-    ImGui::BeginChild("CenterGap", ImVec2(centerGapWidth, avail.y - 20.0f),
+    ImGui::BeginChild("CenterGap", ImVec2(centerGapWidth, safeContentHeight),
                       false,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoInputs);
     ImGui::EndChild();
@@ -2481,7 +2482,7 @@ style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
     // Draw a subtle frosted glass backdrop behind the right panel
     {
       ImVec2 panelPos = ImGui::GetCursorScreenPos();
-      float panelH = avail.y - 20.0f;
+      float panelH = safeContentHeight;
       ImDrawList *pdl = ImGui::GetWindowDrawList();
       pdl->AddRectFilled(panelPos,
                          ImVec2(panelPos.x + contentWidth, panelPos.y + panelH),
@@ -2490,7 +2491,7 @@ style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0.0f));
     ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.6f, 0.2f, 1.0f, 0.12f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 10.0f));
-    ImGui::BeginChild("TabContent", ImVec2(contentWidth, avail.y - 20.0f), true,
+    ImGui::BeginChild("TabContent", ImVec2(contentWidth, safeContentHeight), true,
                       0);
 
     // Touch scroll logic — position is locked the moment drag exceeds threshold
