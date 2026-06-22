@@ -741,8 +741,8 @@ static bool hook_FindGoal(void *_this, int playerDimension, V3 position,
                 extern bool g_PlayerInVehicle;
                 extern void *g_LastLocalVehicle;
                 if (g_PlayerInVehicle && g_LastLocalVehicle) {
-                    extern void Esp_DirectVehicleTP(void* vehicle, float tx, float ty, float tz, bool keepVelocity);
-                    Esp_DirectVehicleTP(g_LastLocalVehicle, gx, gy, gz, true);
+                    extern void Esp_DirectVehicleTP(void* vehicle, float tx, float ty, float tz, bool playerInside, V3* customVel);
+                    Esp_DirectVehicleTP(g_LastLocalVehicle, gx, gy, gz, true, nullptr);
                 } else {
                     extern bool Teleport_ToPosition(float x, float y, float z, bool ignoreCooldown = false);
                     Teleport_ToPosition(gx, gy, gz, true);
