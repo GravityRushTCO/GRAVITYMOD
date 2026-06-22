@@ -1807,7 +1807,7 @@ void ImGuiMenu::render() {
   style.ScrollbarSize = 6.0f;
 
   style.Colors[ImGuiCol_TitleBg] = ImVec4(0.0, 0.0, 0.0, 1.0f);
-  style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
+style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.02f, 0.0, 0.05f, 1.0f);
   style.Colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.0, 0.0, 0.0, 1.0f);
 
   style.Colors[ImGuiCol_Header] = ImVec4(1.0f, 0.0f, 0.5f, 0.3f);
@@ -1825,155 +1825,248 @@ void ImGuiMenu::render() {
     m_open = false;
   }
 
-  // 1. Right Lateral Vertical Tab (Drawer Tab) - Draggable!
-  float rightTabWidth = 40.0f;
-  float rightTabHeight = 310.0f; // Increased height for buttons
+  // 1. Right Lateral Vertical Tab (Drawer) — 3-column HUD layout
+  // Col 0 (left):  sliders + one-tap buttons
+  // Col 1 (center): GRAVITY animation + ID (top) / TP (bottom)
+  // Col 2 (right): on/off toggles
+  float colCenter = 50.0f;  // width of center GRAVITY column
+  float colSide   = 80.0f;  // width of each side column
+  float rightTabWidth  = colCenter + colSide * 2.0f; // 210px total
+  float rightTabHeight = 340.0f;
   ImVec2 displaySize = ImGui::GetIO().DisplaySize;
-  ImGui::SetNextWindowPos(ImVec2(displaySize.x - rightTabWidth - 10,
-                                 (displaySize.y - rightTabHeight) * 0.5f),
-                          ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowPos(
+      ImVec2(displaySize.x - rightTabWidth - 8,
+             (displaySize.y - rightTabHeight) * 0.5f),
+      ImGuiCond_FirstUseEver);
   ImGui::SetNextWindowSize(ImVec2(rightTabWidth, rightTabHeight),
                            ImGuiCond_Always);
 
-  ImGui::PushStyleColor(
-      ImGuiCol_WindowBg,
-      ImVec4(0.0f, 0.0f, 0.0f, 0.0f)); // Transparent to show our shader
-  ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+  ImGui::PushStyleColor(ImGuiCol_WindowBg,
+                        ImVec4(0.02f, 0.02f, 0.04f, 0.88f));
+  ImGui::PushStyleColor(ImGuiCol_Border,
+                        ImVec4(0.15f, 0.15f, 0.2f, 0.6f));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
 
   if (ImGui::Begin("RightDrawerTab", nullptr,
                    ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                       ImGuiWindowFlags_NoScrollbar)) {
-    ImVec2 winPos = ImGui::GetWindowPos();
+                       ImGuiWindowFlags_NoScrollbar |
+                       ImGuiWindowFlags_NoScrollWithMouse)) {
+    ImVec2 winPos  = ImGui::GetWindowPos();
     ImVec2 winSize = ImGui::GetWindowSize();
+    ImDrawList *drawList = ImGui::GetWindowDrawList();
+    float t = ImGui::GetTime();
 
+    // Extern vars from Main.cpp used in this drawer
+    extern float g_SpeedMultiplier;
+    extern float g_AutoFollowDistance;
+    extern int   g_BonePriority;
+
+    // — Center column: GRAVITY shader background (only center strip) —
     static HexagonBackground drawerBg;
-    drawerBg.init((int)winSize.x, (int)winSize.y);
-    drawerBg.render(ImGui::GetTime(), -1.0f, -1.0f);
+    drawerBg.init((int)colCenter, (int)rightTabHeight);
+    drawerBg.render(t, -1.0f, -1.0f);
+    ImVec2 centerP0 = ImVec2(winPos.x + colSide, winPos.y);
+    ImVec2 centerP1 = ImVec2(winPos.x + colSide + colCenter, winPos.y + rightTabHeight);
+    drawList->AddImage((void *)(intptr_t)drawerBg.getTexture(),
+                       centerP0, centerP1, ImVec2(0,1), ImVec2(1,0));
 
-    ImGui::GetWindowDrawList()->AddImage(
-        (void *)(intptr_t)drawerBg.getTexture(), winPos,
-        ImVec2(winPos.x + winSize.x, winPos.y + winSize.y), ImVec2(0, 1),
-        ImVec2(1, 0));
+    // Vertical separator lines
+    ImU32 sepCol = IM_COL32(80, 80, 100, 120);
+    drawList->AddLine(ImVec2(winPos.x + colSide, winPos.y + 10),
+                      ImVec2(winPos.x + colSide, winPos.y + rightTabHeight - 10), sepCol, 1.0f);
+    drawList->AddLine(ImVec2(winPos.x + colSide + colCenter, winPos.y + 10),
+                      ImVec2(winPos.x + colSide + colCenter, winPos.y + rightTabHeight - 10), sepCol, 1.0f);
 
-    // Faux ID Telephone Button (Top)
-    float btnSizeXY = 35.0f;
-    float btnX = (rightTabWidth - btnSizeXY) * 0.5f;
-    
-    ImGui::SetCursorPos(ImVec2(btnX, 25.0f));
+    // — Click to toggle menu open/closed on blank area —
+    if (ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered() &&
+        ImGui::IsMouseReleased(0)) {
+      ImVec2 drag = ImGui::GetMouseDragDelta(0);
+      if (fabsf(drag.x) < 5.0f && fabsf(drag.y) < 5.0f)
+        m_open = !m_open;
+    }
+
+    // ─────────────────────────────────────────────────────
+    // CENTER COLUMN: ID button (top) + GRAVITY + TP button (bottom)
+    // ─────────────────────────────────────────────────────
+    float btnSz  = 38.0f;
+    float centerX = colSide + (colCenter - btnSz) * 0.5f;
+    float pulse  = sinf(t * 3.5f) * 0.5f + 0.5f;
+    ImU32 gradC  = GetGradientColorU32(0.5f);
+    uint8_t gr   = (gradC >> 0) & 0xFF;
+    uint8_t gg   = (gradC >> 8) & 0xFF;
+    uint8_t gb   = (gradC >> 16) & 0xFF;
+
+    // — ID BUTTON (top of center col) —
     static bool localDeviceFaker = false;
-    static float fakeIdEndTime = 0.0f;
-    float currentTime = ImGui::GetTime();
-
-    // Auto disable after 15 seconds
+    static float fakeIdEndTime   = 0.0f;
+    float currentTime = t;
     if (localDeviceFaker && currentTime > fakeIdEndTime) {
       localDeviceFaker = false;
       TriggerChange(153, false);
     }
-
-    ImU32 fakerColor = localDeviceFaker ? IM_COL32(0, 255, 0, 255)
-                                        : IM_COL32(200, 200, 200, 255);
-                                        
-    ImGui::PushStyleColor(ImGuiCol_Text, fakerColor);
-    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(40, 40, 45, 230));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(60, 60, 65, 255));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(30, 30, 35, 255));
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
-    
-    if (ImGui::Button("ID", ImVec2(btnSizeXY, btnSizeXY))) {
+    // Halo glow ring
+    {
+      float haloR = btnSz * 0.5f + 4.0f + pulse * 6.0f;
+      ImVec2 haloC = ImVec2(winPos.x + colSide + colCenter * 0.5f,
+                            winPos.y + 18.0f + btnSz * 0.5f);
+      uint8_t ha = localDeviceFaker ? 180 : (uint8_t)(60 + 80 * pulse);
+      drawList->AddCircle(haloC, haloR,
+          localDeviceFaker ? IM_COL32(0,255,80, ha)
+                           : IM_COL32(gr, gg, gb, ha), 32, 2.0f);
+    }
+    ImGui::SetCursorPos(ImVec2(centerX, 18.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text,
+        localDeviceFaker ? IM_COL32(0,255,80,255) : IM_COL32(220,220,220,255));
+    ImGui::PushStyleColor(ImGuiCol_Button,        IM_COL32(25,25,30,220));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(50,50,60,255));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  IM_COL32(15,15,20,255));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, btnSz * 0.5f);
+    if (ImGui::Button("ID", ImVec2(btnSz, btnSz))) {
       localDeviceFaker = !localDeviceFaker;
       TriggerChange(153, localDeviceFaker);
       if (localDeviceFaker) {
         fakeIdEndTime = currentTime + 15.0f;
-        // Mark for Data Reset upon next startup if app is closed while active
         system("touch /data/data/com.onestate.global/reset_pending");
       } else {
         remove("/data/data/com.onestate.global/reset_pending");
       }
     }
-    
     ImGui::PopStyleVar();
     ImGui::PopStyleColor(4);
 
-    if (ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered() &&
-        ImGui::IsMouseReleased(0)) {
-      ImVec2 drag = ImGui::GetMouseDragDelta(0);
-      if (abs(drag.x) < 5.0f && abs(drag.y) < 5.0f) {
-        m_open = !m_open;
-      }
+    // — TP BUTTON (bottom of center col) —
+    extern bool g_TpCarteToggle;
+    {
+      float haloR = btnSz * 0.5f + 4.0f + pulse * 6.0f;
+      ImVec2 haloC = ImVec2(winPos.x + colSide + colCenter * 0.5f,
+                            winPos.y + rightTabHeight - 18.0f - btnSz * 0.5f);
+      uint8_t ha = g_TpCarteToggle ? 200 : (uint8_t)(50 + 70 * pulse);
+      drawList->AddCircle(haloC, haloR,
+          g_TpCarteToggle ? IM_COL32(255,80,80,ha) : IM_COL32(gr,gg,gb,ha),
+          32, 2.0f);
     }
-
-    ImDrawList *drawList = ImGui::GetWindowDrawList();
-    ImGui::SetWindowFontScale(1.0f);
-
-    float timePulse = sin(ImGui::GetTime() * 8.0f) * 0.5f + 0.5f;
-    ImU32 chevronCol = GetGradientColorU32(0.5f);
-    ImU32 chevronPulseCol =
-        IM_COL32((int)(((chevronCol >> 0) & 0xFF) * timePulse),
-                 (int)(((chevronCol >> 8) & 0xFF) * timePulse),
-                 (int)(((chevronCol >> 16) & 0xFF) * timePulse), 255);
-
-    ImVec2 chevronTopPos =
-        ImVec2(winPos.x + (rightTabWidth - ImGui::CalcTextSize("^").x) * 0.5f,
-               winPos.y + 10);
-    drawList->AddText(chevronTopPos, chevronPulseCol, "^");
-
-    const char *letters[] = {"G", "R", "A", "V", "I", "T", "Y"};
-    float startY = winPos.y + 70.0f; // Shifted down for ID button
-    for (int i = 0; i < 7; i++) {
-      ImVec2 textSize = ImGui::CalcTextSize(letters[i]);
-      float cx = winPos.x + (rightTabWidth - textSize.x) * 0.5f;
-      float cy = startY + i * 22.0f;
-
-      float localTime = fmodf(ImGui::GetTime() * 0.35f + (6 - i) * 0.05f, 1.0f);
-      if (localTime < 0.0f)
-        localTime += 1.0f;
-
-      float writeProgress = localTime < 0.3f ? (localTime / 0.3f) : 1.0f;
-      float eraseProgress =
-          localTime > 0.6f ? ((localTime - 0.6f) / 0.3f) : 0.0f;
-      if (eraseProgress > 1.0f)
-        eraseProgress = 1.0f;
-
-      // smoothstep
-      writeProgress =
-          writeProgress * writeProgress * (3.0f - 2.0f * writeProgress);
-      eraseProgress =
-          eraseProgress * eraseProgress * (3.0f - 2.0f * eraseProgress);
-      float alpha = writeProgress - eraseProgress;
-
-      if (alpha > 0.01f) {
-        float mixT = sin(ImGui::GetTime() * 2.0f - i * 0.5f) * 0.5f + 0.5f;
-        ImU32 baseCol = GetGradientColorU32(mixT);
-
-        ImU32 col = IM_COL32((baseCol >> 0) & 0xFF, (baseCol >> 8) & 0xFF,
-                             (baseCol >> 16) & 0xFF, (int)(alpha * 255));
-
-        drawList->AddText(ImVec2(cx, cy), col, letters[i]);
-
-        // Extra glow layer
-        ImU32 glowCol = IM_COL32((baseCol >> 0) & 0xFF, (baseCol >> 8) & 0xFF,
-                                 (baseCol >> 16) & 0xFF, (int)(alpha * 100));
-        drawList->AddText(ImVec2(cx, cy), glowCol, letters[i]);
-      }
-    }
-
-    // TP Carte Button (Bottom)
-    ImGui::SetCursorPos(ImVec2(btnX, rightTabHeight - btnSizeXY - 25.0f));
-    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 100, 100, 255));
-    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(40, 40, 45, 230));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(60, 60, 65, 255));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(30, 30, 35, 255));
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
-    
-    if (ImGui::Button("TP", ImVec2(btnSizeXY, btnSizeXY))) {
-      extern bool g_TpCarteToggle;
+    ImGui::SetCursorPos(ImVec2(centerX, rightTabHeight - 18.0f - btnSz));
+    ImGui::PushStyleColor(ImGuiCol_Text,
+        g_TpCarteToggle ? IM_COL32(255,80,80,255) : IM_COL32(220,220,220,255));
+    ImGui::PushStyleColor(ImGuiCol_Button,        IM_COL32(25,25,30,220));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(50,50,60,255));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  IM_COL32(15,15,20,255));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, btnSz * 0.5f);
+    if (ImGui::Button("TP", ImVec2(btnSz, btnSz))) {
       TriggerChange(228, !g_TpCarteToggle);
     }
-    
     ImGui::PopStyleVar();
     ImGui::PopStyleColor(4);
+
+    // ─────────────────────────────────────────────────────
+    // LEFT COLUMN: Sliders + one-tap buttons
+    // ─────────────────────────────────────────────────────
+    ImGui::SetWindowFontScale(0.72f);
+    float lPad = 5.0f;
+    float lW   = colSide - lPad * 2.0f;
+    float lY   = 14.0f;
+
+    auto MiniLabel = [&](const char* txt, float gT) {
+      ImGui::SetCursorPos(ImVec2(lPad, lY));
+      ImGui::PushStyleColor(ImGuiCol_Text,
+          ImGui::ColorConvertU32ToFloat4(GetGradientColorU32(gT)));
+      ImGui::TextUnformatted(txt);
+      ImGui::PopStyleColor();
+      lY += 13.0f;
+    };
+
+    MiniLabel("Speed", 0.2f);
+    ImGui::SetCursorPos(ImVec2(lPad, lY));
+    ImGui::PushItemWidth(lW);
+    if (ImGui::SliderFloat("##spd", &g_SpeedMultiplier, 1.0f, 10.0f, "%.1f"))
+      TriggerChange(421, g_SpeedMultiplier);
+    ImGui::PopItemWidth();
+    lY += 22.0f;
+
+    MiniLabel("Dist", 0.35f);
+    ImGui::SetCursorPos(ImVec2(lPad, lY));
+    ImGui::PushItemWidth(lW);
+    if (ImGui::SliderFloat("##dist", &g_AutoFollowDistance, 0.0f, 50.0f, "%.0f"))
+      TriggerChange(302, (int)g_AutoFollowDistance);
+    ImGui::PopItemWidth();
+    lY += 22.0f;
+
+    MiniLabel("Bone", 0.5f);
+    static const char* boneNames[] = {"H","N","C","P"};
+    float bW = lW / 4.0f;
+    for (int b = 0; b < 4; b++) {
+      ImGui::SetCursorPos(ImVec2(lPad + b * (bW + 1.0f), lY));
+      bool active = (g_BonePriority == b);
+      ImGui::PushStyleColor(ImGuiCol_Button,
+          active ? IM_COL32(gr,gg,gb,200) : IM_COL32(30,30,35,200));
+      ImGui::PushStyleColor(ImGuiCol_Text,
+          active ? IM_COL32(0,0,0,255) : IM_COL32(200,200,200,255));
+      ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+      char id[8]; snprintf(id, sizeof(id), "%s##b%d", boneNames[b], b);
+      if (ImGui::Button(id, ImVec2(bW, 20.0f))) {
+        g_BonePriority = b; TriggerChange(183, b);
+      }
+      ImGui::PopStyleVar(); ImGui::PopStyleColor(2);
+    }
+    lY += 26.0f;
+
+    ImGui::SetCursorPos(ImVec2(lPad, lY));
+    ImGui::PushStyleColor(ImGuiCol_Button,        IM_COL32(30,30,40,200));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(gr,gg,gb,180));
+    ImGui::PushStyleColor(ImGuiCol_Text,          IM_COL32(200,200,200,255));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+    if (ImGui::Button("Next##tgt", ImVec2(lW, 22.0f))) TriggerChange(305);
+    ImGui::PopStyleVar(); ImGui::PopStyleColor(3);
+    lY += 26.0f;
+
+    ImGui::SetCursorPos(ImVec2(lPad, lY));
+    ImGui::PushStyleColor(ImGuiCol_Button,        IM_COL32(30,30,40,200));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(gr,gg,gb,180));
+    ImGui::PushStyleColor(ImGuiCol_Text,          IM_COL32(200,200,200,255));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+    if (ImGui::Button("Car>T##ct", ImVec2(lW, 22.0f))) TriggerChange(304);
+    ImGui::PopStyleVar(); ImGui::PopStyleColor(3);
+
+    // ─────────────────────────────────────────────────────
+    // RIGHT COLUMN: On/Off toggles
+    // ─────────────────────────────────────────────────────
+    float rX0 = colSide + colCenter + lPad;
+    float rW  = colSide - lPad * 2.0f;
+    float rY  = 14.0f;
+
+    static bool s_aim=false, s_esp=false, s_fly=false;
+    static bool s_noclip=false, s_god=false, s_follow=false, s_sticky=false;
+
+    struct { const char* lbl; int id; bool* st; float gT; } toggles[] = {
+      {"Aim",    120, &s_aim,    0.1f},
+      {"ESP",    121, &s_esp,    0.25f},
+      {"Fly",    308, &s_fly,    0.4f},
+      {"Clip",   109, &s_noclip, 0.55f},
+      {"God",    13,  &s_god,    0.7f},
+      {"Follow", 300, &s_follow, 0.8f},
+      {"Sticky", 306, &s_sticky, 0.9f},
+    };
+    for (auto& tg : toggles) {
+      ImVec2 dotPos = ImVec2(winPos.x + rX0 + 4.0f, winPos.y + rY + 10.0f);
+      uint8_t da = *tg.st ? 255 : 70;
+      drawList->AddCircleFilled(dotPos, 4.0f,
+          *tg.st ? IM_COL32(gr,gg,gb,da) : IM_COL32(70,70,80,da));
+      ImGui::SetCursorPos(ImVec2(rX0 + 12.0f, rY));
+      float tw = rW - 14.0f;
+      ImGui::PushStyleColor(ImGuiCol_Button,
+          *tg.st ? IM_COL32(gr,gg,gb,55) : IM_COL32(20,20,25,150));
+      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(gr,gg,gb,100));
+      ImGui::PushStyleColor(ImGuiCol_Text,
+          *tg.st ? IM_COL32(gr,gg,gb,255) : IM_COL32(150,150,160,255));
+      ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
+      char bid[32]; snprintf(bid, sizeof(bid), "%s##t%d", tg.lbl, tg.id);
+      if (ImGui::Button(bid, ImVec2(tw, 20.0f))) {
+        *tg.st = !(*tg.st); TriggerChange(tg.id, *tg.st);
+      }
+      ImGui::PopStyleVar(); ImGui::PopStyleColor(3);
+      rY += 25.0f;
+    }
 
     ImGui::SetWindowFontScale(1.0f);
   }
