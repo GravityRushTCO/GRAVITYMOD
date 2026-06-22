@@ -633,7 +633,8 @@ static void hook_SetMapPosition(void *_this, V3 worldPosition, void *method) {
     double now = Esp_GetTimeMs();
     if (now - lastMapTpTime > 800.0) {
       lastMapTpTime = now;
-      Teleport_ToPosition(worldPosition.x, worldPosition.y, worldPosition.z, true);
+      // Spawn map marker position 20 units higher, physics will drop the player correctly
+      Teleport_ToPosition(worldPosition.x, worldPosition.y + 20.0f, worldPosition.z, true);
     }
   }
 
@@ -2025,6 +2026,7 @@ static bool hook_TryGetNearVehicleSeat(void *_this, V3 position, void *vehiclesK
                                            g_LocalPlayerEntityVal = {0,
                                                                      nullptr};
                                        static int g_LocalPlayerEntityId = -1;
+                                       static int g_LocalPlayerVehicleEntityId = -1;
 
                                        typedef void (
                                            *ElementHealthSyncSystem_OnUpdate_t)(
@@ -2337,38 +2339,78 @@ static bool hook_TryGetNearVehicleSeat(void *_this, V3 position, void *vehiclesK
                                            if (localEntityVal == 0 ||
                                                !fn_Entity_get_Id)
                                              return;
-                                           int entityId = fn_Entity_get_Id(
+                                           int playerEntityId = fn_Entity_get_Id(
                                                &localEntityVal);
-                                           void *stashModel =
-                                               *(void **)((char *)veh + 0x78);
-                                           if (!isValidPointer(stashModel))
-                                             return;
-                                           void *modelMap =
-                                               *(void **)((char *)stashModel +
-                                                          0x28);
-                                           void *modelData =
-                                               *(void **)((char *)stashModel +
-                                                          0x30);
-                                           if (!isValidPointer(modelMap) ||
-                                               !isValidPointer(modelData))
-                                             return;
-                                           int modelSlot = -1;
-                                           if (fn_TryGetIndex(modelMap,
-                                                              entityId,
-                                                              &modelSlot)) {
-                                             int *modelValPtr =
-                                                 (int *)((char *)modelData +
-                                                         0x20) +
-                                                 modelSlot;
-                                             *modelValPtr =
-                                                 vehicleCatalog
-                                                     [g_VehicleReplaceVal]
-                                                         .idVal;
-                                             LOGI("ApplyCatalogNow: Vehicle "
-                                                  "applied idVal=%d",
-                                                  vehicleCatalog
-                                                      [g_VehicleReplaceVal]
-                                                          .idVal);
+                                           
+                                           // Get the vehicle entity ID controlled by the local player
+                                           int vehicleEntityId = -1;
+                                           void *pedUtility = *(void **)((char *)veh + 0x38);
+                                           if (isValidPointer(pedUtility)) {
+                                             void *controlledElementStorage = *(void **)((char *)pedUtility + 0x18);
+                                             if (isValidPointer(controlledElementStorage)) {
+                                               void *stashControlsEntity = *(void **)((char *)controlledElementStorage + 0x18);
+                                               if (isValidPointer(stashControlsEntity)) {
+                                                 void *controlsMap = *(void **)((char *)stashControlsEntity + 0x20);
+                                                 void *controlsData = *(void **)((char *)stashControlsEntity + 0x28);
+                                                 if (isValidPointer(controlsMap) && isValidPointer(controlsData)) {
+                                                   // First get the local player's ped entity ID
+                                                   int pedEntityId = -1;
+                                                   int playerControlsSlot = -1;
+                                                   if (fn_TryGetIndex(controlsMap, playerEntityId, &playerControlsSlot)) {
+                                                     MorpehEntity *pedEntityValPtr = (MorpehEntity *)((char *)controlsData + 0x20) + playerControlsSlot;
+                                                     if (isValidPointer(pedEntityValPtr) && pedEntityValPtr->id_gen != 0) {
+                                                       pedEntityId = fn_Entity_get_Id(pedEntityValPtr);
+                                                     }
+                                                   }
+                                                   
+                                                   // Now get the vehicle entity ID controlled by the ped entity
+                                                   if (pedEntityId != -1) {
+                                                     int controlsSlot = -1;
+                                                     if (fn_TryGetIndex(controlsMap, pedEntityId, &controlsSlot)) {
+                                                       MorpehEntity *vehEntityValPtr = (MorpehEntity *)((char *)controlsData + 0x20) + controlsSlot;
+                                                       if (isValidPointer(vehEntityValPtr) && vehEntityValPtr->id_gen != 0) {
+                                                         vehicleEntityId = fn_Entity_get_Id(vehEntityValPtr);
+                                                         g_LocalPlayerVehicleEntityId = vehicleEntityId;
+                                                       }
+                                                     }
+                                                   }
+                                                 }
+                                               }
+                                             }
+                                           }
+
+                                           if (vehicleEntityId != -1) {
+                                             void *stashModel =
+                                                 *(void **)((char *)veh + 0x78);
+                                             if (isValidPointer(stashModel)) {
+                                               void *modelMap =
+                                                   *(void **)((char *)stashModel +
+                                                              0x28);
+                                               void *modelData =
+                                                   *(void **)((char *)stashModel +
+                                                              0x30);
+                                               if (isValidPointer(modelMap) &&
+                                                   isValidPointer(modelData)) {
+                                                 int modelSlot = -1;
+                                                 if (fn_TryGetIndex(modelMap,
+                                                                    vehicleEntityId,
+                                                                    &modelSlot)) {
+                                                   int *modelValPtr =
+                                                       (int *)((char *)modelData +
+                                                               0x20) +
+                                                       modelSlot;
+                                                   *modelValPtr =
+                                                       vehicleCatalog
+                                                           [g_VehicleReplaceVal]
+                                                               .idVal;
+                                                   LOGI("ApplyCatalogNow: Vehicle "
+                                                        "applied idVal=%d for vehicleEntityId=%d",
+                                                        vehicleCatalog
+                                                            [g_VehicleReplaceVal]
+                                                                .idVal, vehicleEntityId);
+                                                 }
+                                               }
+                                             }
                                            }
                                          } else if (type == 260 &&
                                                     g_WeaponReplaceVal > 0 &&
@@ -2605,33 +2647,61 @@ static bool hook_TryGetNearVehicleSeat(void *_this, V3 position, void *vehiclesK
                                                fn_Entity_get_Id(&entityVal);
                                            void *stashVehicleView =
                                                *(void **)((char *)self + 0xA8);
-                                           if (g_VehicleReplaceVal > 0 &&
-                                               g_VehicleReplaceVal <
-                                                   vehicleCatalogSize) {
-                                             void *stashModel = *(
-                                                 void **)((char *)self + 0x78);
-                                             if (isValidPointer(stashModel)) {
-                                               void *modelMap = *(
-                                                   void **)((char *)stashModel +
-                                                            0x28);
-                                               void *modelData = *(
-                                                   void **)((char *)stashModel +
-                                                            0x30);
-                                               if (isValidPointer(modelMap) &&
-                                                   isValidPointer(modelData)) {
-                                                 int modelSlot = -1;
-                                                 if (fn_TryGetIndex(
-                                                         modelMap, entityId,
-                                                         &modelSlot)) {
-                                                   int *modelValPtr =
-                                                       (int *)((char *)
-                                                                   modelData +
-                                                               0x20) +
-                                                       modelSlot;
-                                                   *modelValPtr =
-                                                       vehicleCatalog
-                                                           [g_VehicleReplaceVal]
-                                                               .idVal;
+                                           
+                                           // Get the local player's vehicle entity ID dynamically
+                                           void *pedUtility = *(void **)((char *)self + 0x38);
+                                           if (isValidPointer(pedUtility)) {
+                                             void *controlledElementStorage = *(void **)((char *)pedUtility + 0x18);
+                                             if (isValidPointer(controlledElementStorage)) {
+                                               void *stashControlsEntity = *(void **)((char *)controlledElementStorage + 0x18);
+                                               if (isValidPointer(stashControlsEntity)) {
+                                                 void *controlsMap = *(void **)((char *)stashControlsEntity + 0x20);
+                                                 void *controlsData = *(void **)((char *)stashControlsEntity + 0x28);
+                                                 if (isValidPointer(controlsMap) && isValidPointer(controlsData)) {
+                                                   if (g_LocalPlayerEntityId != -1) {
+                                                     int controlsSlot = -1;
+                                                     if (fn_TryGetIndex(controlsMap, g_LocalPlayerEntityId, &controlsSlot)) {
+                                                       MorpehEntity *vehEntityValPtr = (MorpehEntity *)((char *)controlsData + 0x20) + controlsSlot;
+                                                       if (isValidPointer(vehEntityValPtr) && vehEntityValPtr->id_gen != 0) {
+                                                         g_LocalPlayerVehicleEntityId = fn_Entity_get_Id(vehEntityValPtr);
+                                                       }
+                                                     }
+                                                   }
+                                                 }
+                                               }
+                                             }
+                                           }
+
+                                           // Only replace if it matches the local player's vehicle!
+                                           if (g_LocalPlayerVehicleEntityId != -1 && entityId == g_LocalPlayerVehicleEntityId) {
+                                             if (g_VehicleReplaceVal > 0 &&
+                                                 g_VehicleReplaceVal <
+                                                     vehicleCatalogSize) {
+                                               void *stashModel = *(
+                                                   void **)((char *)self + 0x78);
+                                               if (isValidPointer(stashModel)) {
+                                                 void *modelMap = *(
+                                                     void **)((char *)stashModel +
+                                                              0x28);
+                                                 void *modelData = *(
+                                                     void **)((char *)stashModel +
+                                                              0x30);
+                                                 if (isValidPointer(modelMap) &&
+                                                     isValidPointer(modelData)) {
+                                                   int modelSlot = -1;
+                                                   if (fn_TryGetIndex(
+                                                           modelMap, entityId,
+                                                           &modelSlot)) {
+                                                     int *modelValPtr =
+                                                         (int *)((char *)
+                                                                     modelData +
+                                                                 0x20) +
+                                                         modelSlot;
+                                                     *modelValPtr =
+                                                         vehicleCatalog
+                                                             [g_VehicleReplaceVal]
+                                                                 .idVal;
+                                                   }
                                                  }
                                                }
                                              }
